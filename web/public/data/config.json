@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-05-24T22:06:43.494590+05:30",
+  "sourceWorkbook": "data_source\\MuhuratFinder_V05_ParentStateEngine.xlsx",
+  "eventLocationName": "Mumbai, Maharashtra",
+  "eventLatitude": 19.076,
+  "eventLongitude": 72.8777,
+  "eventTimezone": "Asia/Kolkata",
+  "natalMoonSign": "Cancer",
+  "natalNakshatra": "Ashlesha",
+  "natalLagna": "Leo",
+  "availableCategories": [
+    "overall",
+    "golden",
+    "auspicious",
+    "leadership",
+    "wealth",
+    "relationship",
+    "learning",
+    "execution",
+    "travel",
+    "purchase",
+    "avoid"
+  ]
+}
