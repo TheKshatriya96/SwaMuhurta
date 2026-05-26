@@ -5,6 +5,7 @@ import {
   getDurationMinutes,
   getNextWindow,
   getTodayWindows,
+  isCurrentWindow,
   parseDateTime,
 } from "./utils/time";
 import { compareWindows, getCategoryScore, getScoreColor } from "./utils/scoring";
@@ -22,6 +23,17 @@ const CATEGORY_LABELS = {
   purchase: "Purchase",
   avoid: "Avoid",
 };
+
+const MIN_TIMELINE_SEGMENT_WIDTH = 34;
+const TIMELINE_LABEL_MIN_WIDTH = 36;
+
+function finiteNumber(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function safePixel(value, fallback = 0) {
+  return Math.max(0, finiteNumber(value, fallback));
+}
 
 function getDashboardDataUrl() {
   return `${import.meta.env.BASE_URL}data/muhurat-data.json?v=${Date.now()}`;
@@ -87,6 +99,35 @@ function formatLongDate(date, timeZone) {
   }).format(date);
 }
 
+function getMinutesSinceStartOfDay(date, timeZone) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 0;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(date);
+    const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    const minutes = Number(values.hour || 0) * 60 + Number(values.minute || 0) + Number(values.second || 0) / 60;
+    return finiteNumber(minutes, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function getTimelineMinute(dateTime, timeZone) {
+  const date = parseDateTime(dateTime);
+  if (!date) return 0;
+  return getMinutesSinceStartOfDay(date, timeZone);
+}
+
+function getSafeDurationMinutes(start, end) {
+  return Math.max(0, finiteNumber(getDurationMinutes(start, end), 0));
+}
+
 function calendarGrid(daySummaries) {
   if (!daySummaries.length) return [];
   const first = new Date(`${daySummaries[0].date}T00:00:00`);
@@ -117,6 +158,9 @@ function formatDelta(delta) {
 
 export default function App() {
   const timelineScrollRef = useRef(null);
+  const timelineDragRef = useRef(null);
+  const suppressTimelineClickRef = useRef(false);
+  const lastTimelineAutoScrollKeyRef = useRef("");
   const [config, setConfig] = useState(null);
   const [windows, setWindows] = useState([]);
   const [daySummaries, setDaySummaries] = useState([]);
@@ -127,6 +171,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
   const [lastUpdatedSource, setLastUpdatedSource] = useState("");
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -178,6 +223,28 @@ export default function App() {
     [daySummaries, selectedDate],
   );
 
+  const timelineBands = useMemo(
+    () => (Array.isArray(currentDaySummary?.bands) ? currentDaySummary.bands.filter(Boolean) : []),
+    [currentDaySummary],
+  );
+
+  useEffect(() => {
+    const wrapper = timelineScrollRef.current;
+    if (!wrapper) return undefined;
+
+    const updateWidth = () => setTimelineViewportWidth(safePixel(wrapper.clientWidth, 0));
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+  }, [currentDaySummary]);
+
   const currentDayWindows = useMemo(() => getTodayWindows(windows, selectedDate), [windows, selectedDate]);
 
   useEffect(() => {
@@ -194,6 +261,73 @@ export default function App() {
     () => compareWindows(currentWindow, nextWindow, selectedCategory),
     [currentWindow, nextWindow, selectedCategory],
   );
+  const selectedDateIsToday = selectedDate === formatDateForZone(now, eventTimeZone);
+  const timelineLayout = useMemo(() => {
+    if (!currentDaySummary || !timelineBands.length) {
+      return {
+        dayOffsetWidth: 0,
+        segmentWidths: [],
+        stripWidth: Math.max(safePixel(timelineViewportWidth, 0), 1),
+        firstActiveScrollLeft: 0,
+      };
+    }
+
+    const baseTimelineWidth = Math.max(safePixel(timelineViewportWidth, 0), 1);
+    const sunriseMinute = Math.min(1440, Math.max(0, getTimelineMinute(currentDaySummary.sunrise, eventTimeZone)));
+    const dayOffsetWidth = safePixel((sunriseMinute / 1440) * baseTimelineWidth, 0);
+    const segmentWidths = timelineBands.map((band) => {
+      const minutes = getSafeDurationMinutes(band?.startDateTime, band?.endDateTime);
+      const proportionalWidth = (minutes / 1440) * baseTimelineWidth;
+      return safePixel(Math.max(proportionalWidth, MIN_TIMELINE_SEGMENT_WIDTH), MIN_TIMELINE_SEGMENT_WIDTH);
+    });
+    const totalSegmentWidth = segmentWidths.reduce((total, width) => total + safePixel(width, 0), 0);
+    const stripWidth = Math.max(1, safePixel(dayOffsetWidth + totalSegmentWidth, baseTimelineWidth));
+
+    return {
+      dayOffsetWidth,
+      segmentWidths,
+      stripWidth,
+      firstActiveScrollLeft: dayOffsetWidth,
+    };
+  }, [currentDaySummary, eventTimeZone, timelineBands, timelineViewportWidth]);
+
+  const nowMarkerPosition = useMemo(() => {
+    if (!selectedDateIsToday || !currentDaySummary || !timelineBands.length) return null;
+
+    const nowMinute = Math.min(1440, Math.max(0, getMinutesSinceStartOfDay(now, eventTimeZone)));
+    const sunriseMinute = getTimelineMinute(currentDaySummary.sunrise, eventTimeZone);
+
+    if (nowMinute <= sunriseMinute) {
+      const markerInOffset = sunriseMinute > 0 ? (nowMinute / sunriseMinute) * timelineLayout.dayOffsetWidth : 0;
+      return Math.min(timelineLayout.stripWidth, safePixel(markerInOffset, 0));
+    }
+
+    let position = timelineLayout.dayOffsetWidth;
+    for (let index = 0; index < timelineBands.length; index += 1) {
+      const band = timelineBands[index];
+      const startMinute = getTimelineMinute(band.startDateTime, eventTimeZone);
+      let endMinute = getTimelineMinute(band.endDateTime, eventTimeZone);
+      if (endMinute <= startMinute) {
+        endMinute += 1440;
+      }
+      const width = safePixel(timelineLayout.segmentWidths[index], 0);
+
+      if (nowMinute >= endMinute) {
+        position += width;
+        continue;
+      }
+
+      if (nowMinute >= startMinute) {
+        const duration = Math.max(endMinute - startMinute, 1);
+        const markerInSegment = position + ((nowMinute - startMinute) / duration) * width;
+        return Math.min(timelineLayout.stripWidth, safePixel(markerInSegment, position));
+      }
+
+      return Math.min(timelineLayout.stripWidth, safePixel(position, 0));
+    }
+
+    return Math.min(safePixel(position, 0), timelineLayout.stripWidth);
+  }, [currentDaySummary, eventTimeZone, now, selectedDateIsToday, timelineBands, timelineLayout]);
 
   const liveProgress = useMemo(() => {
     if (!currentWindow) return 0;
@@ -220,6 +354,70 @@ export default function App() {
     wrapper.scrollLeft = nextScrollLeft;
     event.preventDefault();
   };
+
+  const timelineCanRender = Boolean(
+    currentDaySummary &&
+    timelineBands.length &&
+    Number.isFinite(timelineLayout.stripWidth) &&
+    timelineLayout.stripWidth > 0,
+  );
+
+  const handleTimelinePointerDown = (event) => {
+    const wrapper = timelineScrollRef.current;
+    if (!wrapper || event.button !== 0) return;
+
+    timelineDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: wrapper.scrollLeft,
+      dragged: false,
+    };
+    wrapper.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleTimelinePointerMove = (event) => {
+    const wrapper = timelineScrollRef.current;
+    const dragState = timelineDragRef.current;
+    if (!wrapper || !dragState || dragState.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - dragState.startX;
+    if (Math.abs(deltaX) > 3) {
+      dragState.dragged = true;
+      suppressTimelineClickRef.current = true;
+    }
+
+    wrapper.scrollLeft = dragState.startScrollLeft - deltaX;
+  };
+
+  const endTimelineDrag = (event) => {
+    const wrapper = timelineScrollRef.current;
+    const dragState = timelineDragRef.current;
+    if (!wrapper || !dragState || dragState.pointerId !== event.pointerId) return;
+
+    wrapper.releasePointerCapture?.(event.pointerId);
+    timelineDragRef.current = null;
+    window.setTimeout(() => {
+      suppressTimelineClickRef.current = false;
+    }, 0);
+  };
+
+  useEffect(() => {
+    const wrapper = timelineScrollRef.current;
+    if (!wrapper || !timelineCanRender) return;
+
+    const autoScrollKey = `${selectedDate}-${Math.round(timelineLayout.stripWidth)}-${selectedDateIsToday ? "today" : "day"}`;
+    if (lastTimelineAutoScrollKeyRef.current === autoScrollKey) return;
+
+    const targetPosition = selectedDateIsToday && nowMarkerPosition !== null
+      ? nowMarkerPosition
+      : timelineLayout.firstActiveScrollLeft;
+    const maxScrollLeft = Math.max(0, wrapper.scrollWidth - wrapper.clientWidth);
+    const nextScrollLeft = selectedDateIsToday
+      ? Math.max(0, targetPosition - wrapper.clientWidth / 2)
+      : Math.max(0, targetPosition);
+    wrapper.scrollLeft = Math.min(maxScrollLeft, nextScrollLeft);
+    lastTimelineAutoScrollKeyRef.current = autoScrollKey;
+  }, [nowMarkerPosition, selectedDate, selectedDateIsToday, timelineCanRender, timelineLayout.firstActiveScrollLeft, timelineLayout.stripWidth]);
 
   if (error) {
     return <div className="shell"><div className="card error-card">{error}</div></div>;
@@ -380,36 +578,55 @@ export default function App() {
             <span>{currentDaySummary?.dayQuality || "—"}</span>
           </div>
 
-          {currentDaySummary ? (
+          {timelineCanRender ? (
             <>
               <div
                 className="timeline-scroll-wrapper"
                 ref={timelineScrollRef}
                 tabIndex={0}
                 onWheel={handleTimelineWheel}
+                onPointerDown={handleTimelinePointerDown}
+                onPointerMove={handleTimelinePointerMove}
+                onPointerUp={endTimelineDrag}
+                onPointerCancel={endTimelineDrag}
               >
-                <div className="timeline-track">
-                {currentDaySummary.bands.map((band) => {
-                  const minutes = getDurationMinutes(band.startDateTime, band.endDateTime);
-                  const totalMinutes = getDurationMinutes(currentDaySummary.sunrise, currentDaySummary.midnight) || 1;
-                  const width = Math.max(1.25, (minutes / totalMinutes) * 100);
-                  const score = getCategoryScore(band, selectedCategory);
-                  return (
-                    <button
-                      key={`${band.startDateTime}-${band.endDateTime}`}
-                      type="button"
-                      className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""}`}
-                      style={{ flexBasis: `${width}%`, background: getScoreColor(score, selectedCategory) }}
-                      title={`${band.start} - ${band.end} · ${band.primaryState || "Data missing"} · ${scoreText(band, selectedCategory)} · ${band.riskLevel || "Data missing"}`}
-                      onClick={() => {
-                        const match = currentDayWindows.find((window) => window.startDateTime === band.startDateTime);
-                        if (match) setSelectedWindow(match);
-                      }}
-                    >
-                      <span>{band.start}</span>
-                    </button>
-                  );
-                })}
+                <div className="timeline-track" style={{ width: `${safePixel(timelineLayout.stripWidth, 1)}px` }}>
+                  <div
+                    className="timeline-day-offset"
+                    style={{ width: `${safePixel(timelineLayout.dayOffsetWidth, 0)}px` }}
+                  />
+                  {timelineBands.map((band, index) => {
+                    const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
+                    const score = getCategoryScore(band, selectedCategory);
+                    const isOngoing = isCurrentWindow(band, now);
+                    const hasReadableLabel = width >= TIMELINE_LABEL_MIN_WIDTH;
+                    const startLabel = band?.start || formatTime(band?.startDateTime, eventTimeZone);
+                    const endLabel = band?.end || formatTime(band?.endDateTime, eventTimeZone);
+                    return (
+                      <button
+                        key={`${band.startDateTime}-${band.endDateTime}`}
+                        type="button"
+                        className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""} ${isOngoing ? "ongoing" : ""} ${hasReadableLabel ? "" : "compact"}`}
+                        style={{ width: `${width}px`, background: getScoreColor(score, selectedCategory) }}
+                        title={`${startLabel} - ${endLabel} · ${band.primaryState || band.riskLevel || "Data missing"} · Score: ${scoreText(band, selectedCategory)}`}
+                        onClick={(event) => {
+                          if (suppressTimelineClickRef.current) {
+                            event.preventDefault();
+                            return;
+                          }
+                          const match = currentDayWindows.find((window) => window.startDateTime === band.startDateTime);
+                          if (match) setSelectedWindow(match);
+                        }}
+                      >
+                        <span>{startLabel}</span>
+                      </button>
+                    );
+                  })}
+                  {selectedDateIsToday && nowMarkerPosition !== null ? (
+                    <div className="timeline-now-marker" style={{ left: `${safePixel(nowMarkerPosition, 0)}px` }}>
+                      <span>NOW</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="timeline-meta">
@@ -418,7 +635,7 @@ export default function App() {
               </div>
             </>
           ) : (
-            <div className="empty-state">No summary available for the selected day.</div>
+            <div className="empty-state">Timeline data is unavailable for the selected day.</div>
           )}
         </article>
 
