@@ -115,6 +115,31 @@ OPTIONAL_HEADERS = [
     "PurchaseScore",
 ]
 
+HINDU_MONTH_HEADERS = [
+    "hindu_month",
+    "HinduMonth",
+    "lunar_month",
+    "LunarMonth",
+    "month_name",
+    "masa",
+    "Maas",
+]
+
+HINDU_MONTH_BY_SUN_SIGN = {
+    "Pisces": "Chaitra",
+    "Aries": "Vaishakh",
+    "Taurus": "Jyeshtha",
+    "Gemini": "Ashadha",
+    "Cancer": "Shravana",
+    "Leo": "Bhadrapada",
+    "Virgo": "Ashwin",
+    "Libra": "Kartik",
+    "Scorpio": "Margashirsha",
+    "Sagittarius": "Pausha",
+    "Capricorn": "Magha",
+    "Aquarius": "Phalguna",
+}
+
 SCORE_HEADERS = {
     "avoid": "AvoidScore",
     "golden": "GoldenScore",
@@ -425,6 +450,30 @@ def get_row_scores(row: dict[str, Any]) -> dict[str, int | None]:
     return scores
 
 
+def get_hindu_month(row: dict[str, Any]) -> str | None:
+    for header in HINDU_MONTH_HEADERS:
+        value = normalize_text(row.get(header))
+        if value:
+            return value
+    return None
+
+
+def calculate_hindu_month(row: dict[str, Any], active_hindu_month: str | None = None) -> str | None:
+    source_value = get_hindu_month(row)
+    if source_value:
+        return source_value
+
+    paksha = (normalize_text(row.get("Paksha")) or "").lower()
+    sun_sign = normalize_text(row.get("SunSign"))
+    sun_sign_month = HINDU_MONTH_BY_SUN_SIGN.get(sun_sign or "")
+
+    if "shukla" in paksha and sun_sign_month:
+        return sun_sign_month
+    if active_hindu_month:
+        return active_hindu_month
+    return sun_sign_month
+
+
 def first_present(windows: list[dict[str, Any]], field: str) -> Any:
     for window in windows:
         value = window.get(field)
@@ -501,6 +550,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
     formula_cached_values_missing = False
     debug_samples: list[dict[str, Any]] = []
     raw_rows_read = 0
+    active_hindu_month: str | None = None
     for row_values in row_iter:
         formula_row_values = next(formula_row_iter, ())
         raw_rows_read += 1
@@ -513,8 +563,11 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
 
         raw_row = {
             name: row_values[headers[name] - 1] if name in headers else None
-            for name in (CRITICAL_HEADERS + OPTIONAL_HEADERS)
+            for name in (CRITICAL_HEADERS + OPTIONAL_HEADERS + HINDU_MONTH_HEADERS)
         }
+        hindu_month = calculate_hindu_month(raw_row, active_hindu_month)
+        if hindu_month:
+            active_hindu_month = hindu_month
 
         window = {
             "date": to_date_text(raw_row.get("Date")),
@@ -529,6 +582,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             "paksha": normalize_text(raw_row.get("Paksha")),
             "tithi": normalize_text(raw_row.get("Tithi")),
             "tithiNo": to_number(raw_row.get("TithiNo")),
+            "hindu_month": hindu_month,
             "moonNakshatra": normalize_text(raw_row.get("MoonNakshatra")),
             "moonPada": to_number(raw_row.get("MoonPada")),
             "moonSign": normalize_text(raw_row.get("MoonSign")),
@@ -697,6 +751,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
                 "sunrise": sunrise_dt.isoformat(),
                 "midnight": midnight_dt.isoformat(),
                 "mainTithi": day_sample.get("tithi"),
+                "hindu_month": day_sample.get("hindu_month"),
                 "mainNakshatra": day_sample.get("moonNakshatra"),
                 "bestWindowStart": best_band["start"] if best_band else None,
                 "bestWindowEnd": best_band["end"] if best_band else None,

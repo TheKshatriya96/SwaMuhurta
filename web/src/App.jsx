@@ -99,6 +99,20 @@ function formatLongDate(date, timeZone) {
   }).format(date);
 }
 
+function getGregorianMonthKey(dateText) {
+  return typeof dateText === "string" && /^\d{4}-\d{2}/.test(dateText) ? dateText.slice(0, 7) : "";
+}
+
+function formatGregorianMonth(monthKey) {
+  if (!monthKey) return "";
+  const date = new Date(`${monthKey}-01T00:00:00`);
+  if (Number.isNaN(date.getTime())) return monthKey;
+  return new Intl.DateTimeFormat("en-IN", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
 function getMinutesSinceStartOfDay(date, timeZone) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 0;
   try {
@@ -130,16 +144,17 @@ function getSafeDurationMinutes(start, end) {
 
 function calendarGrid(daySummaries) {
   if (!daySummaries.length) return [];
-  const first = new Date(`${daySummaries[0].date}T00:00:00`);
-  const monthStart = new Date(first.getFullYear(), first.getMonth(), 1);
-  const monthEnd = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  const monthKey = getGregorianMonthKey(daySummaries[0].date);
+  if (!monthKey) return [];
+  const monthStart = new Date(`${monthKey}-01T00:00:00`);
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
   const offset = monthStart.getDay();
   const grid = [];
   for (let i = 0; i < offset; i += 1) {
     grid.push(null);
   }
   for (let day = 1; day <= monthEnd.getDate(); day += 1) {
-    const current = new Date(first.getFullYear(), first.getMonth(), day);
+    const current = new Date(monthStart.getFullYear(), monthStart.getMonth(), day);
     const key = current.toISOString().slice(0, 10);
     grid.push(daySummaries.find((item) => item.date === key) ?? { date: key, empty: true });
   }
@@ -154,6 +169,37 @@ function scoreText(window, category) {
 function formatDelta(delta) {
   if (!Number.isFinite(delta)) return "Data missing";
   return delta > 0 ? `+${delta}` : delta;
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "") || "";
+}
+
+function getHinduMonthName(item) {
+  return firstPresent(
+    item?.hindu_month,
+    item?.HinduMonth,
+    item?.lunar_month,
+    item?.LunarMonth,
+    item?.month_name,
+    item?.masa,
+    item?.Maas,
+    item?.hinduMonth,
+    item?.lunarMonth,
+  );
+}
+
+function formatPakshaLabel(value) {
+  return String(value || "")
+    .replace(/\s*paksha\s*/i, "")
+    .trim();
+}
+
+function formatCalendarDayTithi(entry, dayDetails) {
+  const hinduMonth = getHinduMonthName(entry) || getHinduMonthName(dayDetails);
+  const paksha = formatPakshaLabel(firstPresent(entry?.paksha, dayDetails?.paksha));
+  const tithi = firstPresent(entry?.mainTithi, entry?.tithi, dayDetails?.tithi);
+  return [hinduMonth, paksha, tithi].filter(Boolean).join(" ") || "—";
 }
 
 export default function App() {
@@ -172,6 +218,10 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState("");
   const [lastUpdatedSource, setLastUpdatedSource] = useState("");
   const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
+  const [timelineNotice, setTimelineNotice] = useState("");
+  const [timelineScrollRequest, setTimelineScrollRequest] = useState(0);
+  const [visibleCalendarMonth, setVisibleCalendarMonth] = useState("");
+  const [calendarNotice, setCalendarNotice] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -222,6 +272,30 @@ export default function App() {
     () => daySummaries.find((summary) => summary.date === selectedDate) ?? null,
     [daySummaries, selectedDate],
   );
+
+  const sortedAvailableDates = useMemo(
+    () => [...new Set(daySummaries.map((summary) => summary?.date).filter(Boolean))].sort(),
+    [daySummaries],
+  );
+  const sortedAvailableMonths = useMemo(
+    () => [...new Set(sortedAvailableDates.map(getGregorianMonthKey).filter(Boolean))].sort(),
+    [sortedAvailableDates],
+  );
+  const todayDate = formatDateForZone(now, eventTimeZone);
+  const currentGregorianMonth = getGregorianMonthKey(todayDate);
+  const selectedDateIndex = sortedAvailableDates.indexOf(selectedDate);
+  const previousTimelineDate = selectedDateIndex > 0 ? sortedAvailableDates[selectedDateIndex - 1] : "";
+  const nextTimelineDate =
+    selectedDateIndex >= 0 && selectedDateIndex < sortedAvailableDates.length - 1
+      ? sortedAvailableDates[selectedDateIndex + 1]
+      : "";
+
+  useEffect(() => {
+    if (!sortedAvailableMonths.length || visibleCalendarMonth) return;
+    setVisibleCalendarMonth(
+      sortedAvailableMonths.includes(currentGregorianMonth) ? currentGregorianMonth : sortedAvailableMonths[0],
+    );
+  }, [currentGregorianMonth, sortedAvailableMonths, visibleCalendarMonth]);
 
   const timelineBands = useMemo(
     () => (Array.isArray(currentDaySummary?.bands) ? currentDaySummary.bands.filter(Boolean) : []),
@@ -340,7 +414,63 @@ export default function App() {
     return Math.max(0, Math.min(100, (elapsed / total) * 100));
   }, [currentWindow, now]);
 
-  const calendarItems = useMemo(() => calendarGrid(daySummaries), [daySummaries]);
+  const dayDetailsByDate = useMemo(() => {
+    const details = new Map();
+    windows.forEach((window) => {
+      if (!window?.date || details.has(window.date)) return;
+      details.set(window.date, {
+        hindu_month: getHinduMonthName(window),
+        paksha: window.paksha,
+        tithi: window.tithi,
+      });
+    });
+    return details;
+  }, [windows]);
+  const hasHinduMonthData = useMemo(
+    () =>
+      daySummaries.some((summary) => Boolean(getHinduMonthName(summary))) ||
+      windows.some((window) => Boolean(getHinduMonthName(window))),
+    [daySummaries, windows],
+  );
+  useEffect(() => {
+    if (!daySummaries.length && !windows.length) return;
+    if (hasHinduMonthData) return;
+    console.warn("Hindu month missing from JSON; add hindu_month in exporter for full label.");
+  }, [daySummaries.length, hasHinduMonthData, windows.length]);
+  const visibleMonthSummaries = useMemo(
+    () => daySummaries.filter((summary) => getGregorianMonthKey(summary?.date) === visibleCalendarMonth),
+    [daySummaries, visibleCalendarMonth],
+  );
+  const visibleMonthDetails = useMemo(
+    () => visibleMonthSummaries.map((summary) => ({ ...summary, ...(dayDetailsByDate.get(summary.date) || {}) })),
+    [dayDetailsByDate, visibleMonthSummaries],
+  );
+  const calendarItems = useMemo(() => calendarGrid(visibleMonthDetails), [visibleMonthDetails]);
+  const visibleMonthIndex = sortedAvailableMonths.indexOf(visibleCalendarMonth);
+  const previousCalendarMonth = visibleMonthIndex > 0 ? sortedAvailableMonths[visibleMonthIndex - 1] : "";
+  const nextCalendarMonth =
+    visibleMonthIndex >= 0 && visibleMonthIndex < sortedAvailableMonths.length - 1
+      ? sortedAvailableMonths[visibleMonthIndex + 1]
+      : "";
+  const visibleGregorianMonthLabel = formatGregorianMonth(visibleCalendarMonth);
+  const visibleHinduMonths = useMemo(() => {
+    const names = [];
+    visibleMonthDetails.forEach((item) => {
+      const name = getHinduMonthName(item);
+      if (name && !names.includes(name)) names.push(name);
+    });
+    return names;
+  }, [visibleMonthDetails]);
+  const calendarTitle = useMemo(() => {
+    const categoryLabel = CATEGORY_LABELS[selectedCategory] || selectedCategory;
+    const baseTitle = `${categoryLabel} Band view of ${visibleGregorianMonthLabel || "available dates"}`;
+    if (!visibleHinduMonths.length) return baseTitle;
+    const hinduMonthText =
+      visibleHinduMonths.length === 1
+        ? visibleHinduMonths[0]
+        : `${visibleHinduMonths[0]} - ${visibleHinduMonths[visibleHinduMonths.length - 1]}`;
+    return `${baseTitle} (${hinduMonthText})`;
+  }, [selectedCategory, visibleGregorianMonthLabel, visibleHinduMonths]);
 
   const handleTimelineWheel = (event) => {
     const wrapper = timelineScrollRef.current;
@@ -353,6 +483,39 @@ export default function App() {
 
     wrapper.scrollLeft = nextScrollLeft;
     event.preventDefault();
+  };
+
+  const selectTimelineDate = (date) => {
+    if (!date) return;
+    setTimelineNotice("");
+    setSelectedDate(date);
+  };
+
+  const handleTimelineNow = () => {
+    if (!sortedAvailableDates.includes(todayDate)) {
+      setTimelineNotice("Today's data not available");
+      return;
+    }
+
+    setTimelineNotice("");
+    setSelectedDate(todayDate);
+    setTimelineScrollRequest((request) => request + 1);
+  };
+
+  const selectCalendarMonth = (monthKey) => {
+    if (!monthKey) return;
+    setCalendarNotice("");
+    setVisibleCalendarMonth(monthKey);
+  };
+
+  const handleCurrentCalendarMonth = () => {
+    if (!sortedAvailableMonths.includes(currentGregorianMonth)) {
+      setCalendarNotice("Current month data not available");
+      return;
+    }
+
+    setCalendarNotice("");
+    setVisibleCalendarMonth(currentGregorianMonth);
   };
 
   const timelineCanRender = Boolean(
@@ -405,7 +568,7 @@ export default function App() {
     const wrapper = timelineScrollRef.current;
     if (!wrapper || !timelineCanRender) return;
 
-    const autoScrollKey = `${selectedDate}-${Math.round(timelineLayout.stripWidth)}-${selectedDateIsToday ? "today" : "day"}`;
+    const autoScrollKey = `${selectedDate}-${Math.round(timelineLayout.stripWidth)}-${selectedDateIsToday ? "today" : "day"}-${timelineScrollRequest}`;
     if (lastTimelineAutoScrollKeyRef.current === autoScrollKey) return;
 
     const targetPosition = selectedDateIsToday && nowMarkerPosition !== null
@@ -417,7 +580,7 @@ export default function App() {
       : Math.max(0, targetPosition);
     wrapper.scrollLeft = Math.min(maxScrollLeft, nextScrollLeft);
     lastTimelineAutoScrollKeyRef.current = autoScrollKey;
-  }, [nowMarkerPosition, selectedDate, selectedDateIsToday, timelineCanRender, timelineLayout.firstActiveScrollLeft, timelineLayout.stripWidth]);
+  }, [nowMarkerPosition, selectedDate, selectedDateIsToday, timelineCanRender, timelineLayout.firstActiveScrollLeft, timelineLayout.stripWidth, timelineScrollRequest]);
 
   if (error) {
     return <div className="shell"><div className="card error-card">{error}</div></div>;
@@ -575,8 +738,32 @@ export default function App() {
               <p className="eyebrow">Current-Day Timeline</p>
               <h2>{selectedDate || "Select a day"}</h2>
             </div>
-            <span>{currentDaySummary?.dayQuality || "—"}</span>
+            <div className="timeline-header-actions">
+              <div className="timeline-nav-buttons">
+                <button
+                  type="button"
+                  className="timeline-nav-button"
+                  disabled={!previousTimelineDate}
+                  onClick={() => selectTimelineDate(previousTimelineDate)}
+                >
+                  ← Prev Day
+                </button>
+                <button type="button" className="timeline-nav-button now" onClick={handleTimelineNow}>
+                  Now
+                </button>
+                <button
+                  type="button"
+                  className="timeline-nav-button"
+                  disabled={!nextTimelineDate}
+                  onClick={() => selectTimelineDate(nextTimelineDate)}
+                >
+                  Next Day→
+                </button>
+              </div>
+              <span>{currentDaySummary?.dayQuality || "—"}</span>
+            </div>
           </div>
+          {timelineNotice ? <p className="timeline-notice">{timelineNotice}</p> : null}
 
           {timelineCanRender ? (
             <>
@@ -669,10 +856,34 @@ export default function App() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">Monthly Calendar</p>
-            <h2>Band view by day</h2>
+            <h2>{calendarTitle}</h2>
           </div>
-          <span>Click a day to inspect its windows</span>
+          <div className="calendar-header-actions">
+            <div className="calendar-nav-buttons">
+              <button
+                type="button"
+                className="calendar-nav-button"
+                disabled={!previousCalendarMonth}
+                onClick={() => selectCalendarMonth(previousCalendarMonth)}
+              >
+                ← Prev Month
+              </button>
+              <button type="button" className="calendar-nav-button current" onClick={handleCurrentCalendarMonth}>
+                Current Month
+              </button>
+              <button
+                type="button"
+                className="calendar-nav-button"
+                disabled={!nextCalendarMonth}
+                onClick={() => selectCalendarMonth(nextCalendarMonth)}
+              >
+                Next Month →
+              </button>
+            </div>
+            <span>Click a day to inspect its windows</span>
+          </div>
         </div>
+        {calendarNotice ? <p className="calendar-notice">{calendarNotice}</p> : null}
 
         <div className="calendar-head">
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
@@ -684,7 +895,12 @@ export default function App() {
             if (!entry) return <div key={`blank-${index}`} className="calendar-day empty" />;
             if (entry.empty) {
               return (
-                <button key={entry.date} type="button" className="calendar-day muted">
+                <button
+                  key={entry.date}
+                  type="button"
+                  className="calendar-day muted"
+                  disabled
+                >
                   <span>{Number(entry.date.slice(-2))}</span>
                 </button>
               );
@@ -695,7 +911,7 @@ export default function App() {
                 key={entry.date}
                 type="button"
                 className={`calendar-day ${selectedDate === entry.date ? "selected" : ""}`}
-                onClick={() => setSelectedDate(entry.date)}
+                onClick={() => selectTimelineDate(entry.date)}
               >
                 <div className="calendar-top">
                   <strong>{Number(entry.date.slice(-2))}</strong>
@@ -718,7 +934,7 @@ export default function App() {
                   })}
                 </div>
                 <div className="calendar-body">
-                  <p>{entry.mainTithi || "—"}</p>
+                  <p>{formatCalendarDayTithi(entry, dayDetailsByDate.get(entry.date))}</p>
                   <p>{entry.mainNakshatra || "—"}</p>
                   <strong>{entry.bestState || "Data missing"}</strong>
                   <span>{entry.bestWindowStart || "—"} - {entry.bestWindowEnd || "—"}</span>
