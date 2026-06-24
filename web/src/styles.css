@@ -129,6 +129,16 @@ h2 {
   font-size: 1.9rem;
 }
 
+.clock-card small,
+.window-date-line {
+  line-height: 1.45;
+}
+
+.window-date-line {
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
 .controls {
   margin-bottom: 24px;
 }

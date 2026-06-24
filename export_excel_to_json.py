@@ -29,8 +29,10 @@ except ImportError:  # pragma: no cover
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-DATA_SOURCE_DIR = ROOT_DIR / "data_source"
-DEFAULT_SOURCE_WORKBOOK = DATA_SOURCE_DIR / "MuhuratFinder_V05_ParentStateEngine.xlsx"
+PROJECT_DIR = ROOT_DIR.parent
+V05_OUTPUT_DIR = PROJECT_DIR / "v05" / "output"
+DEFAULT_SOURCE_WORKBOOK = V05_OUTPUT_DIR / "MuhuratFinder_V05_ParentStateEngine_FIXED.xlsx"
+LEGACY_SOURCE_WORKBOOK = V05_OUTPUT_DIR / "MuhuratFinder_V05_ParentStateEngine.xlsx"
 PUBLIC_DATA_DIR = ROOT_DIR / "web" / "public" / "data"
 
 WINDOWS_JSON = PUBLIC_DATA_DIR / "windows.json"
@@ -226,7 +228,12 @@ def display_path(path: Path) -> str:
 
 
 def choose_source_workbook(source_override: str | None = None) -> Path:
-    source_workbook = Path(source_override) if source_override else DEFAULT_SOURCE_WORKBOOK
+    if source_override:
+        source_workbook = Path(source_override)
+    elif DEFAULT_SOURCE_WORKBOOK.exists():
+        source_workbook = DEFAULT_SOURCE_WORKBOOK
+    else:
+        source_workbook = LEGACY_SOURCE_WORKBOOK
     if not source_workbook.is_absolute():
         source_workbook = (Path.cwd() / source_workbook).resolve() if source_override else source_workbook.resolve()
     if not source_workbook.exists():
@@ -863,7 +870,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export V06 dashboard JSON from a V05 workbook.")
     parser.add_argument(
         "--source",
-        help="Optional source workbook path. Defaults to data_source/MuhuratFinder_V05_ParentStateEngine.xlsx.",
+        help="Optional source workbook path. Defaults to v05/output/MuhuratFinder_V05_ParentStateEngine_FIXED.xlsx.",
     )
     parser.add_argument(
         "--recalculate",

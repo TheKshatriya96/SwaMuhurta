@@ -202,6 +202,19 @@ function formatCalendarDayTithi(entry, dayDetails) {
   return [hinduMonth, paksha, tithi].filter(Boolean).join(" ") || "—";
 }
 
+function formatWindowTithi(entry, dayDetails) {
+  const hinduMonth = getHinduMonthName(entry) || getHinduMonthName(dayDetails);
+  const paksha = formatPakshaLabel(firstPresent(entry?.paksha, dayDetails?.paksha));
+  const tithi = firstPresent(entry?.tithi, entry?.mainTithi, dayDetails?.tithi);
+  return [hinduMonth, paksha, tithi].filter(Boolean).join(" ") || "-";
+}
+
+function formatDateWithTithi(date, timeZone, entry, dayDetails) {
+  const longDate = formatLongDate(date, timeZone);
+  const tithiLabel = formatWindowTithi(entry, dayDetails);
+  return tithiLabel && tithiLabel !== "-" ? `${longDate} · ${tithiLabel}` : longDate;
+}
+
 export default function App() {
   const timelineScrollRef = useRef(null);
   const timelineDragRef = useRef(null);
@@ -426,6 +439,26 @@ export default function App() {
     });
     return details;
   }, [windows]);
+  const todayDayDetails = dayDetailsByDate.get(todayDate);
+  const liveDateLabel = formatDateWithTithi(now, eventTimeZone, currentWindow || todayDayDetails, todayDayDetails);
+  const currentWindowDayDetails = currentWindow?.date ? dayDetailsByDate.get(currentWindow.date) : null;
+  const currentWindowDate = parseDateTime(currentWindow?.startDateTime);
+  const currentWindowDateLabel =
+    currentWindow && currentWindowDate
+      ? formatDateWithTithi(currentWindowDate, eventTimeZone, currentWindow, currentWindowDayDetails)
+      : "";
+  const nextWindowDayDetails = nextWindow?.date ? dayDetailsByDate.get(nextWindow.date) : null;
+  const nextWindowDate = parseDateTime(nextWindow?.startDateTime);
+  const nextWindowDateLabel =
+    nextWindow && nextWindowDate
+      ? formatDateWithTithi(nextWindowDate, eventTimeZone, nextWindow, nextWindowDayDetails)
+      : "";
+  const selectedWindowDayDetails = selectedWindow?.date ? dayDetailsByDate.get(selectedWindow.date) : null;
+  const selectedWindowDate = parseDateTime(selectedWindow?.startDateTime);
+  const selectedWindowDateLabel =
+    selectedWindow && selectedWindowDate
+      ? formatDateWithTithi(selectedWindowDate, eventTimeZone, selectedWindow, selectedWindowDayDetails)
+      : "";
   const hasHinduMonthData = useMemo(
     () =>
       daySummaries.some((summary) => Boolean(getHinduMonthName(summary))) ||
@@ -600,7 +633,7 @@ export default function App() {
         <div className="clock-card">
           <span>Live time</span>
           <strong>{formatTime(now, eventTimeZone)}</strong>
-          <small>{formatLongDate(now, eventTimeZone)}</small>
+          <small>{liveDateLabel}</small>
         </div>
       </header>
 
@@ -644,6 +677,7 @@ export default function App() {
               <div className="hero-main">
                 <div>
                   <h3>{currentWindow.primaryState || "Data missing"}</h3>
+                  <p className="window-date-line">{currentWindowDateLabel}</p>
                   <p>
                     {formatTime(currentWindow.startDateTime, eventTimeZone)} to {formatTime(currentWindow.endDateTime, eventTimeZone)}
                   </p>
@@ -659,7 +693,7 @@ export default function App() {
               </div>
 
               <div className="metric-grid">
-                <div><span>Tithi</span><strong>{currentWindow.tithi || "—"}</strong></div>
+                <div><span>Tithi</span><strong>{formatWindowTithi(currentWindow, currentWindowDayDetails)}</strong></div>
                 <div><span>Paksha</span><strong>{currentWindow.paksha || "—"}</strong></div>
                 <div><span>Vaar</span><strong>{currentWindow.day || "—"}</strong></div>
                 <div><span>Moon</span><strong>{currentWindow.moonNakshatra || "—"} · {currentWindow.moonSign || "—"}</strong></div>
@@ -707,7 +741,7 @@ export default function App() {
             <>
               <h3>{nextWindow.primaryState || "Data missing"}</h3>
               <p className="next-time">
-                {formatLongDate(parseDateTime(nextWindow.startDateTime), eventTimeZone)}
+                {nextWindowDateLabel}
                 <br />
                 {formatTime(nextWindow.startDateTime, eventTimeZone)} to {formatTime(nextWindow.endDateTime, eventTimeZone)}
               </p>
@@ -835,9 +869,10 @@ export default function App() {
           </div>
           {selectedWindow ? (
             <div className="detail-grid">
+              <div><span>Date</span><strong>{selectedWindowDateLabel}</strong></div>
               <div><span>Time</span><strong>{formatTime(selectedWindow.startDateTime, eventTimeZone)} - {formatTime(selectedWindow.endDateTime, eventTimeZone)}</strong></div>
               <div><span>Risk</span><strong>{selectedWindow.riskLevel || "Data missing"}</strong></div>
-              <div><span>Tithi</span><strong>{selectedWindow.tithi || "—"}</strong></div>
+              <div><span>Tithi</span><strong>{formatWindowTithi(selectedWindow, selectedWindowDayDetails)}</strong></div>
               <div><span>Nakshatra</span><strong>{selectedWindow.moonNakshatra || "—"}</strong></div>
               <div><span>Lagna</span><strong>{selectedWindow.lagnaSign || "—"} {selectedWindow.lagnaDeg ?? "—"}</strong></div>
               <div><span>Hora / Choghadiya</span><strong>{selectedWindow.hora || "—"} · {selectedWindow.choghadiya || "—"}</strong></div>
