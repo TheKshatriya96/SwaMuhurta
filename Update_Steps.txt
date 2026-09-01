@@ -1,0 +1,26 @@
+V06 standalone update flow
+
+1. Edit:
+
+build\MuhuratFinder_V06_Workbook.xlsx
+
+2. Regenerate workbook data + JSON:
+
+python build\run_all.py
+
+3. Optional local preview:
+
+cd web
+npm run dev
+
+4. Push online when ready:
+
+python build\push_online.py --message "Update dashboard data"
+
+5. Watch deployment:
+
+https://github.com/TheKshatriya96/SwaMuhurta/actions
+
+6. Refresh live site after GitHub Actions turns green:
+
+https://thekshatriya96.github.io/SwaMuhurta/

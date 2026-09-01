@@ -1,86 +1,124 @@
 # MuhuratFinder V06 Dashboard
 
-V06 is a static React dashboard. The live website does not recalculate astrology logic and does not need Python, Excel, a backend, a database, login, or paid hosting. It reads dashboard data from:
+V06 is now a self-contained dashboard package. Its runtime build flow no longer depends on sibling `v02`, `v03`, `v04`, or `v05` folders.
+
+## Folder structure
 
 ```text
+v06_Dashboard/
+  build/
+    MuhuratFinder_V06_Workbook.xlsx
+    export_excel_to_json.py
+    push_online.py
+    run_all.py
+    requirements.txt
+    README_build.md
+    dependencies/
+  web/
+  docs/
+  README.md
+```
+
+## Main operator flow
+
+Edit only:
+
+`build/MuhuratFinder_V06_Workbook.xlsx`
+
+First-time setup:
+
+```powershell
+setup_build_env.bat
+```
+
+Then regenerate dashboard data:
+
+```powershell
+build_data.bat
+```
+
+That command:
+
+1. rebuilds raw EPHEMERIS data into the same workbook
+2. reapplies parent-state/dashboard columns into the same workbook
+3. exports JSON to `web/public/data/`
+4. builds the frontend if `npm` is available
+
+## JSON outputs
+
+These files are refreshed by the exporter:
+
+```text
+web/public/data/config.json
+web/public/data/day_summary.json
 web/public/data/muhurat-data.json
+web/public/data/windows.json
 ```
 
-## Data Source
+The React app reads `web/public/data/muhurat-data.json`.
 
-The default source workbook is:
+## Local preview
 
-```text
-data_source/MuhuratFinder_V05_ParentStateEngine.xlsx
-```
-
-Refresh dashboard data:
-
-```bash
-python export_excel_to_json.py
-```
-
-Use another workbook when needed:
-
-```bash
-python export_excel_to_json.py --source "path/to/workbook.xlsx"
-```
-
-The exporter writes JSON to:
-
-```text
-web/public/data/
-```
-
-The live GitHub Pages site reads `muhurat-data.json` dynamically on page load. To update the online dashboard later, replace or regenerate `web/public/data/muhurat-data.json`, commit it, and push to `main`.
-
-## Dashboard
-
-Run the local dashboard:
-
-```bash
+```powershell
 cd web
 npm run dev
 ```
 
-Build the dashboard:
+## Build the site
 
-```bash
+```powershell
+cd web
 npm run build
 ```
 
-Build locally with the same project-page base path that GitHub Actions uses:
+Or let the pipeline do it:
 
-```bash
-$env:BASE_PATH="/YOUR_REPOSITORY_NAME/"
-npm run build:pages
+```powershell
+build_data.bat
 ```
 
-GitHub Actions sets `BASE_PATH` automatically to `/${{ github.event.repository.name }}/`, so you normally do not need to edit `vite.config.js`.
+## Push online
 
-## GitHub Pages
+Do not push by default. Use one of these only when ready:
 
-After pushing this project to GitHub, enable Pages once:
-
-1. Open the repository on GitHub.
-2. Go to Settings > Pages.
-3. Under Build and deployment, set Source to GitHub Actions.
-4. Push to the `main` branch.
-
-The live URL will be:
-
-```text
-https://<github-username>.github.io/<repo-name>/
+```powershell
+push_online.bat --message "Update dashboard data"
 ```
 
-Package V06:
+or
 
-```bash
-python package_dashboard.py
+```powershell
+build_and_push.bat --message "Update dashboard data"
 ```
 
-The package is written to:
+This keeps the existing deployment flow:
 
-```text
-release/MuhuratFinder_V06_Dashboard_Package.zip
+`git add` -> `git commit` -> `git push` -> GitHub Actions builds `web/dist` -> GitHub Pages updates
+
+## Compatibility
+
+The old root command still works:
+
+```powershell
+python export_excel_to_json.py
 ```
+
+It now forwards to `build/export_excel_to_json.py`.
+
+## Troubleshooting
+
+`swisseph` missing:
+
+- run `setup_build_env.bat`
+- the setup uses Python 3.11 and installs `build/requirements.txt` into `build/.venv`
+
+Date range not changing:
+
+- update the `CONFIG` sheet inside `build/MuhuratFinder_V06_Workbook.xlsx`
+- save the workbook
+- run `build_data.bat`
+
+Need packaging notes:
+
+- build-side documentation is in [build/README_build.md](build/README_build.md)
+- cleanup report is in [docs/v06_dependency_cleanup_report.md](docs/v06_dependency_cleanup_report.md)

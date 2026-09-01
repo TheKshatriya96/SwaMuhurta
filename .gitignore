@@ -3,3 +3,5 @@ web/dist/
 release/
 __pycache__/
 .tmp/
+build/debug/
+build/.venv/
