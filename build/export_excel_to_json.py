@@ -1,4 +1,4 @@
-"""Export the V06 workbook rows into static JSON files for the V06 dashboard."""
+"""Export the V07 workbook rows into static JSON files for the V07 dashboard."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import os
 import argparse
 import platform
+import sqlite3
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -30,14 +31,16 @@ except ImportError:  # pragma: no cover
 
 ROOT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = ROOT_DIR.parent
-DEFAULT_SOURCE_WORKBOOK = ROOT_DIR / "MuhuratFinder_V06_Workbook.xlsx"
+DEFAULT_SOURCE_WORKBOOK = ROOT_DIR / "MuhuratFinder_V07_Workbook.xlsx"
 LEGACY_SOURCE_WORKBOOK = DEFAULT_SOURCE_WORKBOOK
 PUBLIC_DATA_DIR = PROJECT_DIR / "web" / "public" / "data"
+BUILD_DATA_DIR = ROOT_DIR / "data"
 
 WINDOWS_JSON = PUBLIC_DATA_DIR / "windows.json"
 DAY_SUMMARY_JSON = PUBLIC_DATA_DIR / "day_summary.json"
 CONFIG_JSON = PUBLIC_DATA_DIR / "config.json"
 MUHURAT_DATA_JSON = PUBLIC_DATA_DIR / "muhurat-data.json"
+MUHURTA_DB = BUILD_DATA_DIR / "muhurta.db"
 
 AVAILABLE_CATEGORIES = [
     "overall",
@@ -217,6 +220,9 @@ class ExportStats:
     excel_recalculation_warning: str | None
     blocked_error: str | None
     warnings: list[str]
+    database_path: Path | None = None
+    database_window_count: int = 0
+    database_day_count: int = 0
 
 
 def display_path(path: Path) -> str:
@@ -519,6 +525,216 @@ def overall_score(scores: dict[str, int | None]) -> int | None:
     return max(positives) if positives else None
 
 
+def json_dump(value: Any) -> str:
+    """Serialize dashboard payload values consistently for SQLite storage."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def write_sqlite_database(
+    windows: list[dict[str, Any]],
+    day_summaries: list[dict[str, Any]],
+    config_payload: dict[str, Any],
+    source_workbook: Path,
+) -> tuple[int, int]:
+    """Write the generated dashboard payload into a local SQLite database."""
+    BUILD_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(MUHURTA_DB) as connection:
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("DROP TABLE IF EXISTS metadata")
+        connection.execute("DROP TABLE IF EXISTS config")
+        connection.execute("DROP TABLE IF EXISTS windows")
+        connection.execute("DROP TABLE IF EXISTS day_summary")
+        connection.execute(
+            """
+            CREATE TABLE metadata (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE config (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE windows (
+                id INTEGER PRIMARY KEY,
+                date TEXT,
+                day TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                start_datetime TEXT,
+                end_datetime TEXT,
+                primary_state TEXT,
+                risk_level TEXT,
+                overall_score INTEGER,
+                avoid_score INTEGER,
+                golden_score INTEGER,
+                auspicious_score INTEGER,
+                leadership_score INTEGER,
+                wealth_score INTEGER,
+                relationship_score INTEGER,
+                learning_score INTEGER,
+                execution_score INTEGER,
+                travel_score INTEGER,
+                purchase_score INTEGER,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE day_summary (
+                date TEXT PRIMARY KEY,
+                day TEXT,
+                day_quality TEXT,
+                best_score INTEGER,
+                best_state TEXT,
+                best_window_start TEXT,
+                best_window_end TEXT,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+
+        metadata = {
+            "generatedAt": datetime.now(ZoneInfo(config_payload.get("eventTimezone") or "Asia/Kolkata")).isoformat(),
+            "sourceWorkbook": display_path(source_workbook),
+            "format": "V07 dashboard SQLite master data",
+        }
+        connection.executemany(
+            "INSERT INTO metadata (key, value_json) VALUES (?, ?)",
+            [(key, json_dump(value)) for key, value in metadata.items()],
+        )
+        connection.executemany(
+            "INSERT INTO config (key, value_json) VALUES (?, ?)",
+            [(key, json_dump(value)) for key, value in config_payload.items()],
+        )
+
+        window_rows = []
+        for index, window in enumerate(windows, start=1):
+            scores = window.get("scores", {})
+            window_rows.append(
+                (
+                    index,
+                    window.get("date"),
+                    window.get("day"),
+                    window.get("start"),
+                    window.get("end"),
+                    window.get("startDateTime"),
+                    window.get("endDateTime"),
+                    window.get("primaryState"),
+                    window.get("riskLevel"),
+                    overall_score(scores),
+                    scores.get("avoid"),
+                    scores.get("golden"),
+                    scores.get("auspicious"),
+                    scores.get("leadership"),
+                    scores.get("wealth"),
+                    scores.get("relationship"),
+                    scores.get("learning"),
+                    scores.get("execution"),
+                    scores.get("travel"),
+                    scores.get("purchase"),
+                    json_dump(window),
+                )
+            )
+        connection.executemany(
+            """
+            INSERT INTO windows (
+                id, date, day, start_time, end_time, start_datetime, end_datetime,
+                primary_state, risk_level, overall_score, avoid_score, golden_score,
+                auspicious_score, leadership_score, wealth_score, relationship_score,
+                learning_score, execution_score, travel_score, purchase_score, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            window_rows,
+        )
+
+        day_rows = [
+            (
+                summary.get("date"),
+                summary.get("day"),
+                summary.get("dayQuality"),
+                summary.get("bestScore"),
+                summary.get("bestState"),
+                summary.get("bestWindowStart"),
+                summary.get("bestWindowEnd"),
+                json_dump(summary),
+            )
+            for summary in day_summaries
+        ]
+        connection.executemany(
+            """
+            INSERT INTO day_summary (
+                date, day, day_quality, best_score, best_state,
+                best_window_start, best_window_end, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            day_rows,
+        )
+
+        connection.execute("CREATE INDEX idx_windows_date ON windows(date)")
+        connection.execute("CREATE INDEX idx_windows_start_datetime ON windows(start_datetime)")
+        connection.execute("CREATE INDEX idx_windows_primary_state ON windows(primary_state)")
+        connection.execute("CREATE INDEX idx_windows_risk_level ON windows(risk_level)")
+        connection.execute("CREATE INDEX idx_windows_overall_score ON windows(overall_score)")
+        connection.commit()
+
+        database_window_count = connection.execute("SELECT COUNT(*) FROM windows").fetchone()[0]
+        database_day_count = connection.execute("SELECT COUNT(*) FROM day_summary").fetchone()[0]
+    return int(database_window_count), int(database_day_count)
+
+
+def read_dashboard_payload_from_database() -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Read dashboard JSON payloads from SQLite so the database is the export source."""
+    with sqlite3.connect(MUHURTA_DB) as connection:
+        windows = [
+            json.loads(row[0])
+            for row in connection.execute(
+                "SELECT payload_json FROM windows ORDER BY start_datetime, id"
+            )
+        ]
+        day_summaries = [
+            json.loads(row[0])
+            for row in connection.execute(
+                "SELECT payload_json FROM day_summary ORDER BY date"
+            )
+        ]
+        config_payload = {
+            key: json.loads(value)
+            for key, value in connection.execute("SELECT key, value_json FROM config")
+        }
+    return windows, day_summaries, config_payload
+
+
+def write_static_json_from_database() -> None:
+    """Write GitHub Pages JSON files from the SQLite master database."""
+    PUBLIC_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    windows, day_summaries, config_payload = read_dashboard_payload_from_database()
+    WINDOWS_JSON.write_text(json.dumps(windows, indent=2, ensure_ascii=False), encoding="utf-8")
+    DAY_SUMMARY_JSON.write_text(json.dumps(day_summaries, indent=2, ensure_ascii=False), encoding="utf-8")
+    CONFIG_JSON.write_text(json.dumps(config_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    public_config_payload = {key: value for key, value in config_payload.items() if key != "sourceWorkbook"}
+    muhurat_data_payload = {
+        "updated_at": public_config_payload.get("generatedAt") or datetime.now(
+            ZoneInfo(public_config_payload.get("eventTimezone") or "Asia/Kolkata")
+        ).isoformat(),
+        "config": public_config_payload,
+        "windows": windows,
+        "day_summaries": day_summaries,
+    }
+    MUHURAT_DATA_JSON.write_text(json.dumps(muhurat_data_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def export_windows_and_summary(source_workbook: Path, should_recalculate: bool = True) -> ExportStats:
     warnings: list[str] = []
     excel_recalculation_ran, excel_recalculation_warning = maybe_recalculate_workbook(source_workbook, should_recalculate)
@@ -544,7 +760,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
     score_columns_found = all(header in headers for header in SCORE_HEADERS.values())
     if missing_v05_headers:
         raise ValueError(
-            "Wrong source workbook. Required parent-state columns were not found in build/MuhuratFinder_V06_Workbook.xlsx."
+            "Wrong source workbook. Required parent-state columns were not found in build/MuhuratFinder_V07_Workbook.xlsx."
         )
     require_headers(headers, CRITICAL_HEADERS)
 
@@ -796,7 +1012,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
         )
     if formula_cached_values_missing:
         warnings.append(
-            "Formula cached values are missing. Open the V06 workbook in Excel, allow calculation, save, then rerun exporter."
+            "Formula cached values are missing. Open the V07 workbook in Excel, allow calculation, save, then rerun exporter."
         )
 
     if blocked_error is not None:
@@ -825,19 +1041,13 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             warnings=warnings,
         )
 
-    WINDOWS_JSON.write_text(json.dumps(windows, indent=2, ensure_ascii=False), encoding="utf-8")
-    DAY_SUMMARY_JSON.write_text(json.dumps(day_summaries, indent=2, ensure_ascii=False), encoding="utf-8")
-    CONFIG_JSON.write_text(json.dumps(config_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    public_config_payload = {key: value for key, value in config_payload.items() if key != "sourceWorkbook"}
-    muhurat_data_payload = {
-        "updated_at": public_config_payload.get("generatedAt") or datetime.now(
-            ZoneInfo(public_config_payload.get("eventTimezone") or "Asia/Kolkata")
-        ).isoformat(),
-        "config": public_config_payload,
-        "windows": windows,
-        "day_summaries": day_summaries,
-    }
-    MUHURAT_DATA_JSON.write_text(json.dumps(muhurat_data_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    database_window_count, database_day_count = write_sqlite_database(
+        windows,
+        day_summaries,
+        config_payload,
+        source_workbook,
+    )
+    write_static_json_from_database()
 
     return ExportStats(
         source_workbook=source_workbook,
@@ -862,14 +1072,17 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
         excel_recalculation_warning=excel_recalculation_warning,
         blocked_error=None,
         warnings=warnings,
+        database_path=MUHURTA_DB,
+        database_window_count=database_window_count,
+        database_day_count=database_day_count,
     )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export V06 dashboard JSON from the V06 workbook.")
+    parser = argparse.ArgumentParser(description="Export V07 dashboard JSON from the V07 workbook.")
     parser.add_argument(
         "--source",
-        help="Optional source workbook path. Defaults to build/MuhuratFinder_V06_Workbook.xlsx.",
+        help="Optional source workbook path. Defaults to build/MuhuratFinder_V07_Workbook.xlsx.",
     )
     parser.add_argument(
         "--recalculate",
@@ -915,6 +1128,10 @@ def main() -> None:
         print(f"WARNING={warning}")
     if stats.blocked_error:
         raise SystemExit(stats.blocked_error)
+    if stats.database_path:
+        print(f"SQLITE_DB={display_path(stats.database_path)}")
+        print(f"SQLITE_WINDOWS={stats.database_window_count}")
+        print(f"SQLITE_DAYS={stats.database_day_count}")
     print(f"WINDOWS_JSON={display_path(WINDOWS_JSON)}")
     print(f"DAY_SUMMARY_JSON={display_path(DAY_SUMMARY_JSON)}")
     print(f"CONFIG_JSON={display_path(CONFIG_JSON)}")

@@ -1,4 +1,4 @@
-"""Wrap the existing GitHub Pages deployment flow for V06."""
+"""Wrap the existing GitHub Pages deployment flow for V07."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def has_changes() -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Commit and push V06 dashboard updates.")
+    parser = argparse.ArgumentParser(description="Commit and push V07 dashboard updates.")
     parser.add_argument(
         "--message",
         default="Update dashboard data",

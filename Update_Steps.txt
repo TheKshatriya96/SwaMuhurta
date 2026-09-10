@@ -1,8 +1,8 @@
-V06 standalone update flow
+V07 standalone update flow
 
 1. Edit:
 
-build\MuhuratFinder_V06_Workbook.xlsx
+build\MuhuratFinder_V07_Workbook.xlsx
 
 2. Regenerate workbook data + JSON:
 

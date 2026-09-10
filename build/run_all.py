@@ -1,4 +1,4 @@
-"""Run the full standalone V06 dashboard data pipeline."""
+"""Run the full standalone V07 dashboard data pipeline."""
 
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = PROJECT_ROOT / "build"
 WEB_DIR = PROJECT_ROOT / "web"
 WEB_DATA_DIR = WEB_DIR / "public" / "data"
-WORKBOOK_PATH = BUILD_DIR / "MuhuratFinder_V06_Workbook.xlsx"
-RAW_BUILDER = BUILD_DIR / "dependencies" / "v06_workbook_builder.py"
-PARENT_STATE_ENGINE = BUILD_DIR / "dependencies" / "v06_parent_state_engine.py"
+BUILD_DATA_DIR = BUILD_DIR / "data"
+WORKBOOK_PATH = BUILD_DIR / "MuhuratFinder_V07_Workbook.xlsx"
+MUHURTA_DB = BUILD_DATA_DIR / "muhurta.db"
+RAW_BUILDER = BUILD_DIR / "dependencies" / "v07_workbook_builder.py"
+PARENT_STATE_ENGINE = BUILD_DIR / "dependencies" / "v07_parent_state_engine.py"
 EXPORTER = BUILD_DIR / "export_excel_to_json.py"
 PUSH_SCRIPT = BUILD_DIR / "push_online.py"
 REQUIRED_JSON_FILES = [
@@ -26,6 +28,7 @@ REQUIRED_JSON_FILES = [
     WEB_DATA_DIR / "muhurat-data.json",
     WEB_DATA_DIR / "windows.json",
 ]
+REQUIRED_DATA_FILES = [MUHURTA_DB, *REQUIRED_JSON_FILES]
 EXTERNAL_PATH_PATTERNS = [
     re.compile(r"[\\\\/]v0[2-5][\\\\/]"),
     re.compile(r"\.\.[\\\\/]"),
@@ -41,11 +44,11 @@ def run_step(command: list[str], cwd: Path) -> None:
 def validate_paths() -> None:
     for path in [BUILD_DIR, WEB_DIR, RAW_BUILDER, PARENT_STATE_ENGINE, EXPORTER, PUSH_SCRIPT]:
         if not path.exists():
-            raise FileNotFoundError(f"Required V06 path missing: {path}")
+            raise FileNotFoundError(f"Required V07 path missing: {path}")
     if not WORKBOOK_PATH.exists():
         raise FileNotFoundError(
             f"Main workbook missing: {WORKBOOK_PATH}\n"
-            "Restore it from version control or copy a known-good V06 workbook into build/."
+            "Restore it from version control or copy a known-good V07 workbook into build/."
         )
 
 
@@ -58,7 +61,7 @@ def validate_runtime_scripts_are_local() -> None:
                 suspicious.append(f"{script_path.name}: matches '{pattern.pattern}'")
     if suspicious:
         raise ValueError(
-            "Found non-local runtime path references in V06 build scripts:\n"
+            "Found non-local runtime path references in V07 build scripts:\n"
             + "\n".join(suspicious)
         )
 
@@ -77,9 +80,9 @@ def validate_workbook_structure() -> None:
 
 
 def validate_json_outputs() -> None:
-    missing = [path for path in REQUIRED_JSON_FILES if not path.exists()]
+    missing = [path for path in REQUIRED_DATA_FILES if not path.exists()]
     if missing:
-        raise FileNotFoundError("Missing generated JSON files:\n" + "\n".join(str(path) for path in missing))
+        raise FileNotFoundError("Missing generated data files:\n" + "\n".join(str(path) for path in missing))
     for path in REQUIRED_JSON_FILES:
         json.loads(path.read_text(encoding="utf-8"))
 
@@ -102,8 +105,8 @@ def maybe_push(push: bool, message: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the standalone V06 workbook-to-dashboard pipeline.")
-    parser.add_argument("--push", action="store_true", help="Commit and push V06 after successful build.")
+    parser = argparse.ArgumentParser(description="Run the standalone V07 workbook-to-dashboard pipeline.")
+    parser.add_argument("--push", action="store_true", help="Commit and push V07 after successful build.")
     parser.add_argument(
         "--message",
         default="Update dashboard data",
@@ -140,6 +143,7 @@ def main() -> None:
     push_result = maybe_push(args.push, args.message)
 
     print(f"WORKBOOK={WORKBOOK_PATH}")
+    print(f"SQLITE_DB={MUHURTA_DB}")
     print(f"WEB_BUILD={web_build_result}")
     print(f"PUSH={push_result}")
     for path in REQUIRED_JSON_FILES:

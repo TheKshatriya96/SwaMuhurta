@@ -1,4 +1,4 @@
-"""Compatibility wrapper for the standalone V06 exporter."""
+"""Compatibility wrapper for the standalone V07 exporter."""
 
 from __future__ import annotations
 

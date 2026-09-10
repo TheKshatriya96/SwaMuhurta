@@ -1,13 +1,15 @@
-# MuhuratFinder V06 Dashboard
+# MuhuratFinder V07 Dashboard
 
-V06 is now a self-contained dashboard package. Its runtime build flow no longer depends on sibling `v02`, `v03`, `v04`, or `v05` folders.
+V07 is a clean, self-contained dashboard development version. Its runtime build flow does not depend on sibling `v02`, `v03`, `v04`, `v05`, or `v06_Dashboard` folders.
 
 ## Folder structure
 
 ```text
-v06_Dashboard/
+v07_Dashboard/
   build/
-    MuhuratFinder_V06_Workbook.xlsx
+    MuhuratFinder_V07_Workbook.xlsx
+    data/
+      muhurta.db
     export_excel_to_json.py
     push_online.py
     run_all.py
@@ -23,7 +25,7 @@ v06_Dashboard/
 
 Edit only:
 
-`build/MuhuratFinder_V06_Workbook.xlsx`
+`build/MuhuratFinder_V07_Workbook.xlsx`
 
 First-time setup:
 
@@ -41,12 +43,21 @@ That command:
 
 1. rebuilds raw EPHEMERIS data into the same workbook
 2. reapplies parent-state/dashboard columns into the same workbook
-3. exports JSON to `web/public/data/`
-4. builds the frontend if `npm` is available
+3. writes SQLite master data to `build/data/muhurta.db`
+4. exports GitHub Pages JSON to `web/public/data/` from SQLite
+5. builds the frontend if `npm` is available
 
-## JSON outputs
+## Data outputs
 
-These files are refreshed by the exporter:
+Master generated data:
+
+```text
+build/data/muhurta.db
+```
+
+This SQLite database is the reusable data layer for future development. It contains indexed `windows`, `day_summary`, `config`, and `metadata` tables.
+
+Static dashboard files are still refreshed for GitHub Pages:
 
 ```text
 web/public/data/config.json
@@ -114,11 +125,11 @@ It now forwards to `build/export_excel_to_json.py`.
 
 Date range not changing:
 
-- update the `CONFIG` sheet inside `build/MuhuratFinder_V06_Workbook.xlsx`
+- update the `CONFIG` sheet inside `build/MuhuratFinder_V07_Workbook.xlsx`
 - save the workbook
 - run `build_data.bat`
 
 Need packaging notes:
 
 - build-side documentation is in [build/README_build.md](build/README_build.md)
-- cleanup report is in [docs/v06_dependency_cleanup_report.md](docs/v06_dependency_cleanup_report.md)
+- independence report is in [docs/v07_independence_report.md](docs/v07_independence_report.md)

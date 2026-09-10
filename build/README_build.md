@@ -1,12 +1,12 @@
-# V06 Build Pipeline
+# V07 Build Pipeline
 
-This folder is the standalone build operator for V06.
+This folder is the standalone build operator for V07.
 
 ## Main workbook
 
 Edit only:
 
-`build/MuhuratFinder_V06_Workbook.xlsx`
+`build/MuhuratFinder_V07_Workbook.xlsx`
 
 Use the `CONFIG` sheet to change date range, event location, natal reference, and any workbook-side logic already present there.
 
@@ -14,29 +14,32 @@ Use the `CONFIG` sheet to change date range, event location, natal reference, an
 
 `run_all.py` performs this sequence:
 
-1. validates local V06 paths
+1. validates local V07 paths
 2. validates the workbook exists
 3. rebuilds raw EPHEMERIS data into the same workbook
 4. reapplies parent-state columns into the same workbook
-5. exports JSON into `web/public/data/`
-6. validates JSON files
-7. optionally builds the frontend
-8. optionally commits and pushes
+5. writes SQLite master data into `build/data/muhurta.db`
+6. exports JSON into `web/public/data/` from SQLite
+7. validates SQLite and JSON files
+8. optionally builds the frontend
+9. optionally commits and pushes
 
 ## Scripts
 
-`dependencies/v06_workbook_builder.py`
+`dependencies/v07_workbook_builder.py`
 
 - raw/source-layer workbook rebuild
 - uses only local `build/dependencies/muhurta_engine`
 
-`dependencies/v06_parent_state_engine.py`
+`dependencies/v07_parent_state_engine.py`
 
 - adds the parent-state/dashboard columns into the same workbook
 
 `export_excel_to_json.py`
 
-- reads `build/MuhuratFinder_V06_Workbook.xlsx`
+- reads `build/MuhuratFinder_V07_Workbook.xlsx`
+- writes the reusable SQLite database:
+  - `build/data/muhurta.db`
 - writes:
   - `web/public/data/config.json`
   - `web/public/data/day_summary.json`

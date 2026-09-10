@@ -24,8 +24,34 @@ const CATEGORY_LABELS = {
   avoid: "Avoid",
 };
 
+const CATEGORY_SHORTFORMS = {
+  overall: "Ov",
+  golden: "Gd",
+  auspicious: "Ap",
+  leadership: "Ld",
+  wealth: "Wt",
+  relationship: "Rl",
+  learning: "Lr",
+  execution: "Ex",
+  travel: "Tr",
+  purchase: "Pr",
+  avoid: "Av",
+};
+
+const POSITIVE_TIMELINE_CATEGORIES = [
+  "golden",
+  "auspicious",
+  "leadership",
+  "wealth",
+  "relationship",
+  "learning",
+  "execution",
+  "travel",
+  "purchase",
+];
+
 const MIN_TIMELINE_SEGMENT_WIDTH = 34;
-const TIMELINE_LABEL_MIN_WIDTH = 36;
+const TIMELINE_LABEL_MIN_WIDTH = 32;
 
 function finiteNumber(value, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -164,6 +190,46 @@ function calendarGrid(daySummaries) {
 function scoreText(window, category) {
   const score = getCategoryScore(window, category);
   return Number.isFinite(score) ? score : "Data missing";
+}
+
+function getTimelineLabel(window, selectedCategory) {
+  if (!window) {
+    return { code: "--", score: null, category: selectedCategory };
+  }
+
+  if (selectedCategory && selectedCategory !== "overall") {
+    const score = getCategoryScore(window, selectedCategory);
+    return {
+      code: CATEGORY_SHORTFORMS[selectedCategory] || selectedCategory.slice(0, 2).toUpperCase(),
+      score,
+      category: selectedCategory,
+    };
+  }
+
+  let bestCategory = "";
+  let bestScore = null;
+  POSITIVE_TIMELINE_CATEGORIES.forEach((category) => {
+    const score = getCategoryScore(window, category);
+    if (score !== null && (bestScore === null || score > bestScore)) {
+      bestCategory = category;
+      bestScore = score;
+    }
+  });
+
+  const avoidScore = getCategoryScore(window, "avoid");
+  if (avoidScore !== null && avoidScore >= 80) {
+    return { code: CATEGORY_SHORTFORMS.avoid, score: avoidScore, category: "avoid" };
+  }
+
+  if (!bestCategory) {
+    return { code: CATEGORY_SHORTFORMS.overall, score: getCategoryScore(window, "overall"), category: "overall" };
+  }
+
+  return {
+    code: CATEGORY_SHORTFORMS[bestCategory] || bestCategory.slice(0, 2).toUpperCase(),
+    score: bestScore,
+    category: bestCategory,
+  };
 }
 
 function formatDelta(delta) {
@@ -561,12 +627,14 @@ export default function App() {
   const handleTimelinePointerDown = (event) => {
     const wrapper = timelineScrollRef.current;
     if (!wrapper || event.button !== 0) return;
+    const targetSegment = event.target?.closest?.(".timeline-segment");
 
     timelineDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startScrollLeft: wrapper.scrollLeft,
       dragged: false,
+      windowStart: targetSegment && wrapper.contains(targetSegment) ? targetSegment.dataset.windowStart : "",
     };
     wrapper.setPointerCapture?.(event.pointerId);
   };
@@ -577,7 +645,7 @@ export default function App() {
     if (!wrapper || !dragState || dragState.pointerId !== event.pointerId) return;
 
     const deltaX = event.clientX - dragState.startX;
-    if (Math.abs(deltaX) > 3) {
+    if (Math.abs(deltaX) > 8) {
       dragState.dragged = true;
       suppressTimelineClickRef.current = true;
     }
@@ -591,6 +659,10 @@ export default function App() {
     if (!wrapper || !dragState || dragState.pointerId !== event.pointerId) return;
 
     wrapper.releasePointerCapture?.(event.pointerId);
+    if (!dragState.dragged && dragState.windowStart) {
+      const match = currentDayWindows.find((window) => window.startDateTime === dragState.windowStart);
+      if (match) setSelectedWindow(match);
+    }
     timelineDragRef.current = null;
     window.setTimeout(() => {
       suppressTimelineClickRef.current = false;
@@ -624,7 +696,7 @@ export default function App() {
       <header className="page-header">
         <div>
           <p className="eyebrow">Live Muhurat Dashboard</p>
-          <h1>Muhurat Finder V06</h1>
+          <h1>Muhurat Finder V07</h1>
           <p className="subtitle">
             Current event location: {config?.eventLocationName || "Unknown"} · Last updated: {formatMetadataDate(lastUpdated, eventTimeZone) || "—"}
             {lastUpdatedSource === "file-load" ? " (loaded from file)" : ""}
@@ -818,18 +890,20 @@ export default function App() {
                   />
                   {timelineBands.map((band, index) => {
                     const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
-                    const score = getCategoryScore(band, selectedCategory);
+                    const timelineLabel = getTimelineLabel(band, selectedCategory);
                     const isOngoing = isCurrentWindow(band, now);
                     const hasReadableLabel = width >= TIMELINE_LABEL_MIN_WIDTH;
                     const startLabel = band?.start || formatTime(band?.startDateTime, eventTimeZone);
                     const endLabel = band?.end || formatTime(band?.endDateTime, eventTimeZone);
+                    const timelineLabelScore = Number.isFinite(timelineLabel.score) ? timelineLabel.score : "--";
                     return (
                       <button
                         key={`${band.startDateTime}-${band.endDateTime}`}
                         type="button"
+                        data-window-start={band.startDateTime}
                         className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""} ${isOngoing ? "ongoing" : ""} ${hasReadableLabel ? "" : "compact"}`}
-                        style={{ width: `${width}px`, background: getScoreColor(score, selectedCategory) }}
-                        title={`${startLabel} - ${endLabel} · ${band.primaryState || band.riskLevel || "Data missing"} · Score: ${scoreText(band, selectedCategory)}`}
+                        style={{ width: `${width}px`, background: getScoreColor(timelineLabel.score, timelineLabel.category) }}
+                        title={`${startLabel} - ${endLabel} · ${CATEGORY_LABELS[timelineLabel.category] || timelineLabel.category}: ${timelineLabelScore} · ${band.primaryState || band.riskLevel || "Data missing"}`}
                         onClick={(event) => {
                           if (suppressTimelineClickRef.current) {
                             event.preventDefault();
@@ -839,7 +913,11 @@ export default function App() {
                           if (match) setSelectedWindow(match);
                         }}
                       >
-                        <span>{startLabel}</span>
+                        <span className="timeline-score-chip">
+                          <strong>{timelineLabel.code}</strong>
+                          <em>{timelineLabelScore}</em>
+                        </span>
+                        <span className="timeline-start-time">{startLabel}</span>
                       </button>
                     );
                   })}
@@ -869,6 +947,14 @@ export default function App() {
           </div>
           {selectedWindow ? (
             <div className="detail-grid">
+              <div className="selected-score-tile">
+                <span>{CATEGORY_LABELS[selectedCategory] || selectedCategory} score</span>
+                <strong>{scoreText(selectedWindow, selectedCategory)}</strong>
+                <div
+                  className="selected-score-bar"
+                  style={{ background: getScoreColor(getCategoryScore(selectedWindow, selectedCategory), selectedCategory) }}
+                />
+              </div>
               <div><span>Date</span><strong>{selectedWindowDateLabel}</strong></div>
               <div><span>Time</span><strong>{formatTime(selectedWindow.startDateTime, eventTimeZone)} - {formatTime(selectedWindow.endDateTime, eventTimeZone)}</strong></div>
               <div><span>Risk</span><strong>{selectedWindow.riskLevel || "Data missing"}</strong></div>
