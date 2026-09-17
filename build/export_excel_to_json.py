@@ -91,6 +91,7 @@ OPTIONAL_HEADERS = [
     "MoonSign",
     "MoonDeg",
     "MoonHouse",
+    "SunSign",
     "EventLocationName",
     "EventLatitude",
     "EventLongitude",
@@ -470,16 +471,21 @@ def get_hindu_month(row: dict[str, Any]) -> str | None:
     return None
 
 
-def calculate_hindu_month(row: dict[str, Any], active_hindu_month: str | None = None) -> str | None:
+def calculate_hindu_month(
+    row: dict[str, Any],
+    active_hindu_month: str | None = None,
+    starts_new_lunar_month: bool = False,
+) -> str | None:
     source_value = get_hindu_month(row)
     if source_value:
         return source_value
 
-    paksha = (normalize_text(row.get("Paksha")) or "").lower()
     sun_sign = normalize_text(row.get("SunSign"))
     sun_sign_month = HINDU_MONTH_BY_SUN_SIGN.get(sun_sign or "")
 
-    if "shukla" in paksha and sun_sign_month:
+    # In the Amanta convention the month changes when Krishna Paksha rolls
+    # into Shukla Paksha. Keep the active month stable across solar ingress.
+    if starts_new_lunar_month and sun_sign_month:
         return sun_sign_month
     if active_hindu_month:
         return active_hindu_month
@@ -773,6 +779,7 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
     debug_samples: list[dict[str, Any]] = []
     raw_rows_read = 0
     active_hindu_month: str | None = None
+    previous_paksha = ""
     for row_values in row_iter:
         formula_row_values = next(formula_row_iter, ())
         raw_rows_read += 1
@@ -787,9 +794,13 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             name: row_values[headers[name] - 1] if name in headers else None
             for name in (CRITICAL_HEADERS + OPTIONAL_HEADERS + HINDU_MONTH_HEADERS)
         }
-        hindu_month = calculate_hindu_month(raw_row, active_hindu_month)
+        current_paksha = (normalize_text(raw_row.get("Paksha")) or "").lower()
+        starts_new_lunar_month = "shukla" in current_paksha and "krishna" in previous_paksha
+        hindu_month = calculate_hindu_month(raw_row, active_hindu_month, starts_new_lunar_month)
         if hindu_month:
             active_hindu_month = hindu_month
+        if current_paksha:
+            previous_paksha = current_paksha
 
         window = {
             "date": to_date_text(raw_row.get("Date")),

@@ -50,8 +50,28 @@ const POSITIVE_TIMELINE_CATEGORIES = [
   "purchase",
 ];
 
+const TREND_CATEGORIES = [...POSITIVE_TIMELINE_CATEGORIES, "avoid"];
+const DOTTED_TREND_CATEGORIES = new Set(["leadership", "wealth", "purchase"]);
+
+const CATEGORY_LINE_COLORS = {
+  golden: "#facc15",
+  auspicious: "#34d399",
+  leadership: "#60a5fa",
+  wealth: "#22c55e",
+  relationship: "#f472b6",
+  learning: "#a78bfa",
+  execution: "#fb923c",
+  travel: "#22d3ee",
+  purchase: "#eab308",
+  avoid: "#ef4444",
+};
+
 const MIN_TIMELINE_SEGMENT_WIDTH = 34;
 const TIMELINE_LABEL_MIN_WIDTH = 32;
+const TREND_CHART_HEIGHT = 88;
+const TREND_TOP_Y = 8;
+const TREND_BASELINE_Y = 56;
+const TREND_BOTTOM_Y = 82;
 
 function finiteNumber(value, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -232,6 +252,24 @@ function getTimelineLabel(window, selectedCategory) {
   };
 }
 
+function getTrendPointY(category, score) {
+  const numericScore = Number(score);
+  const normalizedScore = Number.isFinite(numericScore) ? Math.max(0, Math.min(100, numericScore)) : 0;
+  if (category === "avoid") {
+    return TREND_BASELINE_Y + (normalizedScore / 100) * (TREND_BOTTOM_Y - TREND_BASELINE_Y);
+  }
+  return TREND_BASELINE_Y - (normalizedScore / 100) * (TREND_BASELINE_Y - TREND_TOP_Y);
+}
+
+function buildTrendPath(points, category) {
+  return points
+    .map((point, index) => {
+      const y = getTrendPointY(category, point.scores[category]);
+      return `${index === 0 ? "M" : "L"}${point.centerX.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 function formatDelta(delta) {
   if (!Number.isFinite(delta)) return "Data missing";
   return delta > 0 ? `+${delta}` : delta;
@@ -292,6 +330,12 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("overall");
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedWindow, setSelectedWindow] = useState(null);
+  const [timelineMode, setTimelineMode] = useState("best");
+  const [lastSingleCategory, setLastSingleCategory] = useState("golden");
+  const [activeTrendCategories, setActiveTrendCategories] = useState(() =>
+    Object.fromEntries(TREND_CATEGORIES.map((category) => [category, true])),
+  );
+  const [timelineHoverIndex, setTimelineHoverIndex] = useState(null);
   const [now, setNow] = useState(new Date());
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
@@ -444,6 +488,35 @@ export default function App() {
     };
   }, [currentDaySummary, eventTimeZone, timelineBands, timelineViewportWidth]);
 
+  const timelineTrendPoints = useMemo(() => {
+    let left = timelineLayout.dayOffsetWidth;
+    return timelineBands.map((band, index) => {
+      const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
+      const point = {
+        band,
+        index,
+        startX: left,
+        centerX: left + width / 2,
+        width,
+        scores: Object.fromEntries(
+          TREND_CATEGORIES.map((category) => [category, getCategoryScore(band, category)]),
+        ),
+      };
+      left += width;
+      return point;
+    });
+  }, [timelineBands, timelineLayout.dayOffsetWidth, timelineLayout.segmentWidths]);
+
+  const hoveredTimelinePoint =
+    timelineHoverIndex === null ? null : timelineTrendPoints[timelineHoverIndex] || null;
+  const hoveredTimelineBand = hoveredTimelinePoint?.band || null;
+  const timelineTooltipLeft = hoveredTimelinePoint
+    ? timelineLayout.stripWidth > 360
+      ? Math.max(180, Math.min(timelineLayout.stripWidth - 180, hoveredTimelinePoint.centerX))
+      : timelineLayout.stripWidth / 2
+    : 0;
+  const timelineDisplayCategory = timelineMode === "single" ? selectedCategory : "overall";
+
   const nowMarkerPosition = useMemo(() => {
     if (!selectedDateIsToday || !currentDaySummary || !timelineBands.length) return null;
 
@@ -525,6 +598,10 @@ export default function App() {
     selectedWindow && selectedWindowDate
       ? formatDateWithTithi(selectedWindowDate, eventTimeZone, selectedWindow, selectedWindowDayDetails)
       : "";
+  const selectedTimelineDayDetails = selectedDate ? dayDetailsByDate.get(selectedDate) : null;
+  const selectedTimelineTithiLabel = currentDaySummary
+    ? formatCalendarDayTithi(currentDaySummary, selectedTimelineDayDetails)
+    : "";
   const hasHinduMonthData = useMemo(
     () =>
       daySummaries.some((summary) => Boolean(getHinduMonthName(summary))) ||
@@ -588,6 +665,31 @@ export default function App() {
     if (!date) return;
     setTimelineNotice("");
     setSelectedDate(date);
+    setTimelineHoverIndex(null);
+  };
+
+  const handleCategoryChange = (category) => {
+    setSelectedCategory(category);
+    if (category === "overall") {
+      setTimelineMode("best");
+      return;
+    }
+    setLastSingleCategory(category);
+    setTimelineMode("single");
+  };
+
+  const handleTimelineModeChange = (mode) => {
+    setTimelineMode(mode);
+    setTimelineHoverIndex(null);
+    if (mode === "best") {
+      setSelectedCategory("overall");
+    } else if (mode === "single") {
+      setSelectedCategory(lastSingleCategory);
+    }
+  };
+
+  const toggleTrendCategory = (category) => {
+    setActiveTrendCategories((current) => ({ ...current, [category]: !current[category] }));
   };
 
   const handleTimelineNow = () => {
@@ -724,7 +826,7 @@ export default function App() {
                 name="category"
                 value={category}
                 checked={selectedCategory === category}
-                onChange={() => setSelectedCategory(category)}
+                onChange={() => handleCategoryChange(category)}
               />
               <span>{CATEGORY_LABELS[category] || category}</span>
             </label>
@@ -843,6 +945,7 @@ export default function App() {
             <div>
               <p className="eyebrow">Current-Day Timeline</p>
               <h2>{selectedDate || "Select a day"}</h2>
+              {selectedTimelineTithiLabel ? <p className="window-date-line">{selectedTimelineTithiLabel}</p> : null}
             </div>
             <div className="timeline-header-actions">
               <div className="timeline-nav-buttons">
@@ -871,10 +974,60 @@ export default function App() {
           </div>
           {timelineNotice ? <p className="timeline-notice">{timelineNotice}</p> : null}
 
+          <div className="timeline-view-controls">
+            <div className="timeline-mode-switch" role="group" aria-label="Timeline view mode">
+              <button
+                type="button"
+                className={timelineMode === "best" ? "active" : ""}
+                onClick={() => handleTimelineModeChange("best")}
+              >
+                Best Category
+              </button>
+              <button
+                type="button"
+                className={timelineMode === "single" ? "active" : ""}
+                onClick={() => handleTimelineModeChange("single")}
+              >
+                Single Category
+              </button>
+              <button
+                type="button"
+                className={timelineMode === "multi" ? "active" : ""}
+                onClick={() => handleTimelineModeChange("multi")}
+              >
+                Multi Trend
+              </button>
+            </div>
+            <span className="timeline-mode-note">
+              {timelineMode === "best"
+                ? "Strongest signal per window"
+                : timelineMode === "single"
+                  ? `${CATEGORY_LABELS[selectedCategory] || selectedCategory} intensity`
+                  : "All category signals"}
+            </span>
+          </div>
+
+          {timelineMode === "multi" ? (
+            <div className="trend-legend" aria-label="Trend category visibility">
+              {TREND_CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  className={`${activeTrendCategories[category] ? "active" : ""} ${DOTTED_TREND_CATEGORIES.has(category) ? "dotted" : ""} ${category === "avoid" ? "avoid" : ""}`}
+                  aria-pressed={Boolean(activeTrendCategories[category])}
+                  onClick={() => toggleTrendCategory(category)}
+                >
+                  <span style={{ "--trend-color": CATEGORY_LINE_COLORS[category] }} />
+                  {CATEGORY_SHORTFORMS[category]} {CATEGORY_LABELS[category]}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {timelineCanRender ? (
             <>
               <div
-                className="timeline-scroll-wrapper"
+                className={`timeline-scroll-wrapper ${timelineMode === "multi" ? "trend-active" : ""}`}
                 ref={timelineScrollRef}
                 tabIndex={0}
                 onWheel={handleTimelineWheel}
@@ -882,55 +1035,155 @@ export default function App() {
                 onPointerMove={handleTimelinePointerMove}
                 onPointerUp={endTimelineDrag}
                 onPointerCancel={endTimelineDrag}
+                onMouseLeave={() => setTimelineHoverIndex(null)}
               >
-                <div className="timeline-track" style={{ width: `${safePixel(timelineLayout.stripWidth, 1)}px` }}>
-                  <div
-                    className="timeline-day-offset"
-                    style={{ width: `${safePixel(timelineLayout.dayOffsetWidth, 0)}px` }}
-                  />
-                  {timelineBands.map((band, index) => {
-                    const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
-                    const timelineLabel = getTimelineLabel(band, selectedCategory);
-                    const isOngoing = isCurrentWindow(band, now);
-                    const hasReadableLabel = width >= TIMELINE_LABEL_MIN_WIDTH;
-                    const startLabel = band?.start || formatTime(band?.startDateTime, eventTimeZone);
-                    const endLabel = band?.end || formatTime(band?.endDateTime, eventTimeZone);
-                    const timelineLabelScore = Number.isFinite(timelineLabel.score) ? timelineLabel.score : "--";
-                    return (
-                      <button
-                        key={`${band.startDateTime}-${band.endDateTime}`}
-                        type="button"
-                        data-window-start={band.startDateTime}
-                        className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""} ${isOngoing ? "ongoing" : ""} ${hasReadableLabel ? "" : "compact"}`}
-                        style={{ width: `${width}px`, background: getScoreColor(timelineLabel.score, timelineLabel.category) }}
-                        title={`${startLabel} - ${endLabel} · ${CATEGORY_LABELS[timelineLabel.category] || timelineLabel.category}: ${timelineLabelScore} · ${band.primaryState || band.riskLevel || "Data missing"}`}
-                        onClick={(event) => {
-                          if (suppressTimelineClickRef.current) {
-                            event.preventDefault();
-                            return;
-                          }
-                          const match = currentDayWindows.find((window) => window.startDateTime === band.startDateTime);
-                          if (match) setSelectedWindow(match);
-                        }}
+                <div className="timeline-canvas" style={{ width: `${safePixel(timelineLayout.stripWidth, 1)}px` }}>
+                  <div className="timeline-track">
+                    <div
+                      className="timeline-day-offset"
+                      style={{ width: `${safePixel(timelineLayout.dayOffsetWidth, 0)}px` }}
+                    />
+                    {timelineBands.map((band, index) => {
+                      const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
+                      const timelineLabel = getTimelineLabel(band, timelineDisplayCategory);
+                      const isOngoing = isCurrentWindow(band, now);
+                      const hasReadableLabel = width >= TIMELINE_LABEL_MIN_WIDTH;
+                      const startLabel = band?.start || formatTime(band?.startDateTime, eventTimeZone);
+                      const endLabel = band?.end || formatTime(band?.endDateTime, eventTimeZone);
+                      const timelineLabelScore = Number.isFinite(timelineLabel.score) ? timelineLabel.score : "--";
+                      return (
+                        <button
+                          key={`${band.startDateTime}-${band.endDateTime}`}
+                          type="button"
+                          data-window-start={band.startDateTime}
+                          className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""} ${isOngoing ? "ongoing" : ""} ${hasReadableLabel ? "" : "compact"}`}
+                          style={{ width: `${width}px`, background: getScoreColor(timelineLabel.score, timelineLabel.category) }}
+                          title={`${startLabel} - ${endLabel} · ${CATEGORY_LABELS[timelineLabel.category] || timelineLabel.category}: ${timelineLabelScore} · ${band.primaryState || band.riskLevel || "Data missing"}`}
+                          onMouseEnter={() => setTimelineHoverIndex(index)}
+                          onFocus={() => setTimelineHoverIndex(index)}
+                          onClick={(event) => {
+                            if (suppressTimelineClickRef.current) {
+                              event.preventDefault();
+                              return;
+                            }
+                            const match = currentDayWindows.find((window) => window.startDateTime === band.startDateTime);
+                            if (match) setSelectedWindow(match);
+                          }}
+                        >
+                          {timelineMode !== "multi" ? (
+                            <span className="timeline-score-chip">
+                              <strong>{timelineLabel.code}</strong>
+                              <em>{timelineLabelScore}</em>
+                            </span>
+                          ) : null}
+                          <span className="timeline-start-time">{startLabel}</span>
+                        </button>
+                      );
+                    })}
+                    {selectedDateIsToday && nowMarkerPosition !== null ? (
+                      <div className="timeline-now-marker" style={{ left: `${safePixel(nowMarkerPosition, 0)}px` }}>
+                        <span>NOW</span>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {timelineMode === "multi" ? (
+                    <div className="timeline-trend-panel">
+                      <svg
+                        width={safePixel(timelineLayout.stripWidth, 1)}
+                        height={TREND_CHART_HEIGHT}
+                        viewBox={`0 0 ${safePixel(timelineLayout.stripWidth, 1)} ${TREND_CHART_HEIGHT}`}
+                        role="img"
+                        aria-label="Category score trends aligned to timeline windows"
                       >
-                        <span className="timeline-score-chip">
-                          <strong>{timelineLabel.code}</strong>
-                          <em>{timelineLabelScore}</em>
-                        </span>
-                        <span className="timeline-start-time">{startLabel}</span>
-                      </button>
-                    );
-                  })}
-                  {selectedDateIsToday && nowMarkerPosition !== null ? (
-                    <div className="timeline-now-marker" style={{ left: `${safePixel(nowMarkerPosition, 0)}px` }}>
-                      <span>NOW</span>
+                        <line
+                          className="trend-guide-line"
+                          x1="0"
+                          x2={safePixel(timelineLayout.stripWidth, 1)}
+                          y1={getTrendPointY("golden", 50)}
+                          y2={getTrendPointY("golden", 50)}
+                        />
+                        <line
+                          className="trend-baseline"
+                          x1="0"
+                          x2={safePixel(timelineLayout.stripWidth, 1)}
+                          y1={TREND_BASELINE_Y}
+                          y2={TREND_BASELINE_Y}
+                        />
+                        {TREND_CATEGORIES.map((category) =>
+                          activeTrendCategories[category] ? (
+                            <path
+                              key={category}
+                              className={`trend-line ${DOTTED_TREND_CATEGORIES.has(category) ? "dotted" : ""} ${category === "avoid" ? "avoid" : ""}`}
+                              d={buildTrendPath(timelineTrendPoints, category)}
+                              stroke={CATEGORY_LINE_COLORS[category]}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ) : null,
+                        )}
+                        {hoveredTimelinePoint
+                          ? TREND_CATEGORIES.map((category) =>
+                              activeTrendCategories[category] ? (
+                                <circle
+                                  key={category}
+                                  className="trend-hover-point"
+                                  cx={hoveredTimelinePoint.centerX}
+                                  cy={getTrendPointY(category, hoveredTimelinePoint.scores[category])}
+                                  r="2.6"
+                                  fill={CATEGORY_LINE_COLORS[category]}
+                                />
+                              ) : null,
+                            )
+                          : null}
+                        {timelineTrendPoints.map((point) => (
+                          <rect
+                            key={point.band.startDateTime}
+                            className="trend-hit-zone"
+                            x={point.startX}
+                            y="0"
+                            width={point.width}
+                            height={TREND_CHART_HEIGHT}
+                            onMouseEnter={() => setTimelineHoverIndex(point.index)}
+                            onClick={(event) => {
+                              if (suppressTimelineClickRef.current) {
+                                event.preventDefault();
+                                return;
+                              }
+                              const match = currentDayWindows.find(
+                                (window) => window.startDateTime === point.band.startDateTime,
+                              );
+                              if (match) setSelectedWindow(match);
+                            }}
+                          />
+                        ))}
+                      </svg>
                     </div>
                   ) : null}
+
+                  {timelineMode === "multi" && hoveredTimelinePoint && hoveredTimelineBand ? (
+                    <div className="timeline-hover-card" style={{ left: `${timelineTooltipLeft}px` }}>
+                      <strong>
+                        {hoveredTimelineBand.start || formatTime(hoveredTimelineBand.startDateTime, eventTimeZone)} - {hoveredTimelineBand.end || formatTime(hoveredTimelineBand.endDateTime, eventTimeZone)}
+                      </strong>
+                      <div className="timeline-tooltip-grid">
+                        {TREND_CATEGORIES.map((category) => (
+                          <span key={category}>
+                            <i style={{ background: CATEGORY_LINE_COLORS[category] }} />
+                            {CATEGORY_SHORTFORMS[category]}
+                            <b>{Number.isFinite(hoveredTimelinePoint.scores[category]) ? hoveredTimelinePoint.scores[category] : "—"}</b>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="timeline-axis-labels">
+                    <span style={{ left: `${safePixel(timelineLayout.dayOffsetWidth, 0)}px` }}>
+                      Sunrise {formatTime(currentDaySummary.sunrise, eventTimeZone)}
+                    </span>
+                    <span className="midnight-label">Midnight {formatTime(currentDaySummary.midnight, eventTimeZone)}</span>
+                  </div>
                 </div>
-              </div>
-              <div className="timeline-meta">
-                <span>Sunrise {formatTime(currentDaySummary.sunrise, eventTimeZone)}</span>
-                <span>Midnight {formatTime(currentDaySummary.midnight, eventTimeZone)}</span>
               </div>
             </>
           ) : (
@@ -958,8 +1211,10 @@ export default function App() {
               <div><span>Date</span><strong>{selectedWindowDateLabel}</strong></div>
               <div><span>Time</span><strong>{formatTime(selectedWindow.startDateTime, eventTimeZone)} - {formatTime(selectedWindow.endDateTime, eventTimeZone)}</strong></div>
               <div><span>Risk</span><strong>{selectedWindow.riskLevel || "Data missing"}</strong></div>
+              <div><span>Hindu Month</span><strong>{getHinduMonthName(selectedWindow) || getHinduMonthName(selectedWindowDayDetails) || "—"}</strong></div>
               <div><span>Tithi</span><strong>{formatWindowTithi(selectedWindow, selectedWindowDayDetails)}</strong></div>
-              <div><span>Nakshatra</span><strong>{selectedWindow.moonNakshatra || "—"}</strong></div>
+              <div><span>Moon</span><strong>{selectedWindow.moonNakshatra || "—"} · {selectedWindow.moonSign || "—"}</strong></div>
+              <div><span>Yoga / Karana</span><strong>{selectedWindow.yoga || "—"} · {selectedWindow.karana || "—"}</strong></div>
               <div><span>Lagna</span><strong>{selectedWindow.lagnaSign || "—"} {selectedWindow.lagnaDeg ?? "—"}</strong></div>
               <div><span>Hora / Choghadiya</span><strong>{selectedWindow.hora || "—"} · {selectedWindow.choghadiya || "—"}</strong></div>
               <div className="detail-copy"><span>Best for</span><p>{selectedWindow.bestActions || "No highlight."}</p></div>
