@@ -313,6 +313,19 @@ function formatWindowTithi(entry, dayDetails) {
   return [hinduMonth, paksha, tithi].filter(Boolean).join(" ") || "-";
 }
 
+function formatTimelineTithi(windows, dayDetails) {
+  if (!windows.length) return dayDetails ? formatCalendarDayTithi(dayDetails, dayDetails) : "";
+
+  const labels = [];
+  windows.forEach((entry) => {
+    const label = formatWindowTithi(entry, dayDetails);
+    if (label && label !== "-" && !labels.includes(label)) labels.push(label);
+  });
+
+  if (labels.length <= 2) return labels.join(" → ");
+  return `${labels[0]} → ${labels[labels.length - 1]}`;
+}
+
 function formatDateWithTithi(date, timeZone, entry, dayDetails) {
   const longDate = formatLongDate(date, timeZone);
   const tithiLabel = formatWindowTithi(entry, dayDetails);
@@ -599,9 +612,10 @@ export default function App() {
       ? formatDateWithTithi(selectedWindowDate, eventTimeZone, selectedWindow, selectedWindowDayDetails)
       : "";
   const selectedTimelineDayDetails = selectedDate ? dayDetailsByDate.get(selectedDate) : null;
-  const selectedTimelineTithiLabel = currentDaySummary
-    ? formatCalendarDayTithi(currentDaySummary, selectedTimelineDayDetails)
-    : "";
+  const selectedTimelineTithiLabel = useMemo(
+    () => formatTimelineTithi(currentDayWindows, selectedTimelineDayDetails),
+    [currentDayWindows, selectedTimelineDayDetails],
+  );
   const hasHinduMonthData = useMemo(
     () =>
       daySummaries.some((summary) => Boolean(getHinduMonthName(summary))) ||

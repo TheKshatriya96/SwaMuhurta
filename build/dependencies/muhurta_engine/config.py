@@ -65,12 +65,12 @@ DAY_CHOGHADIYA = {
 
 NIGHT_CHOGHADIYA = {
     0: ["Chara", "Roga", "Kala", "Labh", "Udveg", "Shubha", "Amrit", "Chara"],
-    1: ["Labh", "Udveg", "Shubha", "Amrit", "Chara", "Roga", "Kala", "Labh"],
+    1: ["Kala", "Labh", "Udveg", "Shubha", "Amrit", "Chara", "Roga", "Kala"],
     2: ["Udveg", "Shubha", "Amrit", "Chara", "Roga", "Kala", "Labh", "Udveg"],
     3: ["Shubha", "Amrit", "Chara", "Roga", "Kala", "Labh", "Udveg", "Shubha"],
     4: ["Amrit", "Chara", "Roga", "Kala", "Labh", "Udveg", "Shubha", "Amrit"],
     5: ["Roga", "Kala", "Labh", "Udveg", "Shubha", "Amrit", "Chara", "Roga"],
-    6: ["Shubha", "Amrit", "Chara", "Roga", "Kala", "Labh", "Udveg", "Shubha"],
+    6: ["Labh", "Udveg", "Shubha", "Amrit", "Chara", "Roga", "Kala", "Labh"],
 }
 
 RAHU_KAAL_SLOTS = {0: 2, 1: 7, 2: 5, 3: 6, 4: 4, 5: 3, 6: 8}

@@ -8,6 +8,7 @@ import argparse
 import platform
 import sqlite3
 import subprocess
+import time as time_module
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -18,8 +19,10 @@ from openpyxl import load_workbook
 
 try:
     import win32com.client  # type: ignore
+    import pythoncom  # type: ignore
 except Exception:  # pragma: no cover - optional dependency at runtime
     win32com = None
+    pythoncom = None
 else:  # pragma: no cover - import alias for lint clarity
     win32com = win32com.client
 
@@ -256,22 +259,87 @@ def calculate_workbook_with_excel_com(source_path: Path) -> None:
         raise RuntimeError("win32com.client is not available.")
     excel = None
     workbook = None
+    control_workbook = None
+    owns_excel = True
     try:
-        excel = win32com.DispatchEx("Excel.Application")
+        if os.environ.get("MUHURTA_USE_ACTIVE_EXCEL") == "1":
+            excel = win32com.GetActiveObject("Excel.Application")
+            owns_excel = False
+        else:
+            excel = win32com.DispatchEx("Excel.Application")
         excel.Visible = False
         excel.DisplayAlerts = False
-        workbook = excel.Workbooks.Open(str(source_path))
+        excel.EnableEvents = False
+        excel.AskToUpdateLinks = False
+
+        def retry_busy_excel(action, label: str) -> None:
+            last_error: Exception | None = None
+            for _ in range(60):
+                try:
+                    action()
+                    return
+                except Exception as exc:  # pragma: no cover - depends on Excel COM timing
+                    last_error = exc
+                    if getattr(exc, "hresult", None) != -2147418111 and (
+                        not exc.args or exc.args[0] != -2147418111
+                    ):
+                        raise
+                    if pythoncom is not None:
+                        pythoncom.PumpWaitingMessages()
+                    time_module.sleep(1)
+            raise RuntimeError(f"Excel remained busy while attempting to {label}.") from last_error
+
+        # A temporary workbook allows calculation mode to be set before the large
+        # target workbook opens, preventing an uncontrolled automatic calculation.
+        control_workbook = excel.Workbooks.Add()
+        excel.Calculation = -4135  # xlCalculationManual
+        workbook = excel.Workbooks.Open(
+            str(source_path),
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True,
+        )
+        control_workbook.Close(SaveChanges=False)
+        control_workbook = None
+
         excel.CalculateFullRebuild()
-        workbook.Save()
-        workbook.Close(SaveChanges=True)
+        calculation_deadline = time_module.monotonic() + 1800
+        while True:
+            if time_module.monotonic() >= calculation_deadline:
+                raise TimeoutError("Excel calculation did not finish within 30 minutes.")
+            try:
+                calculation_state = int(excel.CalculationState)
+            except Exception as exc:  # pragma: no cover - depends on Excel COM timing
+                if getattr(exc, "hresult", None) != -2147418111 and (
+                    not exc.args or exc.args[0] != -2147418111
+                ):
+                    raise
+                if pythoncom is not None:
+                    pythoncom.PumpWaitingMessages()
+                time_module.sleep(1)
+                continue
+            if calculation_state == 0:
+                break
+            if pythoncom is not None:
+                pythoncom.PumpWaitingMessages()
+            time_module.sleep(0.5)
+
+        retry_busy_excel(lambda: setattr(excel, "Calculation", -4105), "restore automatic calculation")
+        retry_busy_excel(workbook.Save, "save the recalculated workbook")
+        retry_busy_excel(lambda: workbook.Close(SaveChanges=False), "close the recalculated workbook")
         workbook = None
     finally:  # pragma: no cover - depends on local Excel
         if workbook is not None:
             try:
-                workbook.Close(SaveChanges=True)
+                workbook.Close(SaveChanges=False)
             except Exception:
                 pass
-        if excel is not None:
+        if control_workbook is not None:
+            try:
+                control_workbook.Close(SaveChanges=False)
+            except Exception:
+                pass
+        if excel is not None and owns_excel:
             try:
                 excel.Quit()
             except Exception:

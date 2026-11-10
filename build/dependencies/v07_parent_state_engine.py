@@ -171,9 +171,14 @@ def build_formulas(row_number: int, header_map: dict[str, int], v05_col_map: dic
     weak_moon_or = (
         f'OR({moon_house}=8,{moon_house}=12,AND({moon_house}=6,OR({tara_name}="Vipat",{tara_name}="Pratyak",{tara_name}="Naidhana")))'
     )
+    inauspicious_choghadiya_or = (
+        f'OR({contains_formula(choghadiya,"Kala")},{contains_formula(choghadiya,"Kaal")},'
+        f'{contains_formula(choghadiya,"Rog")},{contains_formula(choghadiya,"Udveg")})'
+    )
     avoid_hard_or = (
         f'OR({ref("IsRahuKaal")}=1,{ref("IsYamaganda")}=1,{ref("IsGulika")}=1,{ref("IsDurmuhurta")}=1,'
-        f'{ref("IsVarjyam")}=1,{ref("IsTithiKshaya")}=1,{ref("IsNakshatraKshaya")}=1)'
+        f'{ref("IsVarjyam")}=1,{ref("IsTithiKshaya")}=1,{ref("IsNakshatraKshaya")}=1,'
+        f'{inauspicious_choghadiya_or})'
     )
 
     golden_raw = (
@@ -393,7 +398,8 @@ def build_formulas(row_number: int, header_map: dict[str, int], v05_col_map: dic
         "SecondaryStateReason": f'=IF({ref("SecondaryStates")}="","No strong secondary state.","Secondary states indicate additional supported action areas, but PrimaryState should be preferred.")',
         "RiskLevel": f'=IF({ref("AvoidScore")}>=80,"High Risk",IF(OR({ref("IsHarshYoga")}=1,{ref("IsWeakMoonRisk")}=1),"Medium Risk","Low Risk"))',
         "RiskReason": (
-            f'=IF({ref("IsRahuKaal")}=1,"Rahu Kaal is active; avoid new starts.",'
+            f'=IF({inauspicious_choghadiya_or},"Inauspicious Choghadiya is active; avoid important starts.",'
+            f'IF({ref("IsRahuKaal")}=1,"Rahu Kaal is active; avoid new starts.",'
             f'IF({ref("IsYamaganda")}=1,"Yamaganda is active; avoid initiating important actions.",'
             f'IF({ref("IsGulika")}=1,"Gulika is active; avoid major commitments.",'
             f'IF({ref("IsDurmuhurta")}=1,"Durmuhurta is active; avoid important starts.",'
@@ -401,7 +407,7 @@ def build_formulas(row_number: int, header_map: dict[str, int], v05_col_map: dic
             f'IF({ref("IsTithiKshaya")}=1,"Tithi Kshaya indicates unstable timing.",'
             f'IF({ref("IsNakshatraKshaya")}=1,"Nakshatra Kshaya indicates unstable timing.",'
             f'IF({ref("IsHarshYoga")}=1,"Harsh Yoga is active; use caution.",'
-            f'IF({ref("IsWeakMoonRisk")}=1,"Moon placement is sensitive; avoid emotional or risky decisions.","No major risk filter active.")))))))))'
+            f'IF({ref("IsWeakMoonRisk")}=1,"Moon placement is sensitive; avoid emotional or risky decisions.","No major risk filter active."))))))))))'
         ),
         "BestActions": (
             f'=IF({ref("PrimaryState")}="Golden Muhurat","Prayer, sankalp, important start, major positive commitment, long-term initiative.",'
