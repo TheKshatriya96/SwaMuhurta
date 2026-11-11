@@ -79,10 +79,17 @@ def main() -> None:
         print("STATUS=Changes detected. Dry run only.")
         return
 
+    # Capture this before staging: a newly added baseline becomes "tracked" as
+    # soon as `git add` runs, but it must be allowed through on its first push.
+    tracked_before_staging = {
+        path: is_tracked(path)
+        for path in PROTECTED_RULE_DATABASES
+    }
+
     run_git(["add", "."])
     if not args.include_rules:
         for path in PROTECTED_RULE_DATABASES:
-            if is_tracked(path):
+            if tracked_before_staging[path]:
                 run_git(["reset", "--", path.as_posix()])
     if not has_staged_changes():
         print("STATUS=Nothing to commit after staging.")
