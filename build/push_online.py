@@ -8,6 +8,10 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROTECTED_RULE_DATABASES = [
+    Path("build/data/rules.db"),
+    Path("web/public/data/rules.db"),
+]
 
 
 def run_git(command: list[str], capture_output: bool = False) -> subprocess.CompletedProcess[str]:
@@ -25,6 +29,26 @@ def has_changes() -> bool:
     return bool(result.stdout.strip())
 
 
+def has_staged_changes() -> bool:
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=PROJECT_ROOT,
+        check=False,
+    )
+    return result.returncode == 1
+
+
+def is_tracked(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", path.as_posix()],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Commit and push V07 dashboard updates.")
     parser.add_argument(
@@ -36,6 +60,11 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Show whether there are changes, but do not push anything.",
+    )
+    parser.add_argument(
+        "--include-rules",
+        action="store_true",
+        help="Explicitly allow tracked baseline rules.db files to be staged and pushed.",
     )
     args = parser.parse_args()
 
@@ -51,7 +80,11 @@ def main() -> None:
         return
 
     run_git(["add", "."])
-    if not has_changes():
+    if not args.include_rules:
+        for path in PROTECTED_RULE_DATABASES:
+            if is_tracked(path):
+                run_git(["reset", "--", path.as_posix()])
+    if not has_staged_changes():
         print("STATUS=Nothing to commit after staging.")
         return
 

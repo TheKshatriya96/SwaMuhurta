@@ -10,6 +10,8 @@ v07_Dashboard/
     MuhuratFinder_V07_Workbook.xlsx
     data/
       muhurta.db
+      rules.db
+    create_rules_db.py
     export_excel_to_json.py
     push_online.py
     run_all.py
@@ -42,10 +44,12 @@ build_data.bat
 That command:
 
 1. rebuilds raw EPHEMERIS data into the same workbook
-2. reapplies parent-state/dashboard columns into the same workbook
-3. writes SQLite master data to `build/data/muhurta.db`
-4. exports GitHub Pages JSON to `web/public/data/` from SQLite
-5. builds the frontend if `npm` is available
+2. writes raw SQLite data to `build/data/muhurta.db`
+3. exports static raw data for GitHub Pages
+4. builds the frontend if `npm` is available
+
+Scoring is not recalculated by Excel or Python. The React dashboard loads
+`rules.db` and applies all enabled rules in the browser.
 
 ## Data outputs
 
@@ -57,6 +61,25 @@ build/data/muhurta.db
 
 This SQLite database is the reusable data layer for future development. It contains indexed `windows`, `day_summary`, `config`, and `metadata` tables.
 
+Rule baseline:
+
+```text
+build/data/rules.db
+web/public/data/rules.db
+```
+
+Open **Rule Lab** from the dashboard to change rule points, conditions,
+thresholds, category labels, short codes, and colors. Changes update every
+dashboard panel immediately. **Save to browser DB** stores a real SQLite binary
+in the browser's IndexedDB. It survives reloads and data rebuilds on that
+browser. Use **Export DB** and **Import DB** to move the same rules to another
+browser or computer.
+
+GitHub Pages is static hosting, so a browser cannot rewrite the repository's
+hosted `rules.db`. The hosted file is an immutable baseline; operator edits are
+kept in the browser copy. A writable shared online rule database would require
+an API/backend in a future version.
+
 Static dashboard files are still refreshed for GitHub Pages:
 
 ```text
@@ -67,6 +90,8 @@ web/public/data/windows.json
 ```
 
 The React app reads `web/public/data/muhurat-data.json`.
+Those JSON files contain raw display/ephemeris values only; they do not contain
+the scoring rules.
 
 ## Local preview
 
@@ -105,6 +130,15 @@ build_and_push.bat --message "Update dashboard data"
 This keeps the existing deployment flow:
 
 `git add` -> `git commit` -> `git push` -> GitHub Actions builds `web/dist` -> GitHub Pages updates
+
+Normal pushes protect already-tracked `build/data/rules.db` and
+`web/public/data/rules.db`, so rebuilding local data does not replace the hosted
+baseline. Only use this explicit option when you intentionally want to publish
+a new baseline:
+
+```powershell
+python build/push_online.py --include-rules --message "Publish rule baseline"
+```
 
 ## Compatibility
 

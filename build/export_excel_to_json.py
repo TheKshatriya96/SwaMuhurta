@@ -87,6 +87,8 @@ OPTIONAL_HEADERS = [
     "Gulika",
     "Durmuhurta",
     "Varjyam",
+    "TithiKshaya",
+    "NakshatraKshaya",
     "LagnaSign",
     "LagnaDeg",
     "LagnaNakshatra",
@@ -95,6 +97,21 @@ OPTIONAL_HEADERS = [
     "MoonDeg",
     "MoonHouse",
     "SunSign",
+    "SunHouse",
+    "MarsSign",
+    "MarsHouse",
+    "MercurySign",
+    "MercuryHouse",
+    "JupiterSign",
+    "JupiterHouse",
+    "VenusSign",
+    "VenusHouse",
+    "SaturnSign",
+    "SaturnHouse",
+    "RahuSign",
+    "RahuHouse",
+    "KetuSign",
+    "KetuHouse",
     "EventLocationName",
     "EventLatitude",
     "EventLongitude",
@@ -103,24 +120,6 @@ OPTIONAL_HEADERS = [
     "NatalMoonSign",
     "NatalNakshatra",
     "NatalLagna",
-    "PrimaryState",
-    "PrimaryStateReason",
-    "SecondaryStates",
-    "SecondaryStateReason",
-    "RiskLevel",
-    "RiskReason",
-    "BestActions",
-    "AvoidActions",
-    "AvoidScore",
-    "GoldenScore",
-    "AuspiciousScore",
-    "LeadershipScore",
-    "WealthScore",
-    "RelationshipScore",
-    "LearningScore",
-    "ExecutionScore",
-    "TravelScore",
-    "PurchaseScore",
 ]
 
 HINDU_MONTH_HEADERS = [
@@ -148,55 +147,16 @@ HINDU_MONTH_BY_SUN_SIGN = {
     "Aquarius": "Phalguna",
 }
 
-SCORE_HEADERS = {
-    "avoid": "AvoidScore",
-    "golden": "GoldenScore",
-    "auspicious": "AuspiciousScore",
-    "leadership": "LeadershipScore",
-    "wealth": "WealthScore",
-    "relationship": "RelationshipScore",
-    "learning": "LearningScore",
-    "execution": "ExecutionScore",
-    "travel": "TravelScore",
-    "purchase": "PurchaseScore",
-}
-
-V05_REQUIRED_HEADERS = [
-    "PrimaryState",
-    "PrimaryStateReason",
-    "SecondaryStates",
-    "RiskLevel",
-    "RiskReason",
-    "BestActions",
-    "AvoidActions",
-    "AvoidScore",
-    "GoldenScore",
-    "AuspiciousScore",
-    "LeadershipScore",
-    "WealthScore",
-    "RelationshipScore",
-    "LearningScore",
-    "ExecutionScore",
-    "TravelScore",
-    "PurchaseScore",
-]
-
 DEBUG_SAMPLE_HEADERS = [
     "Date",
     "Start",
     "End",
-    "PrimaryState",
-    "RiskLevel",
-    "AvoidScore",
-    "GoldenScore",
-    "AuspiciousScore",
-    "LeadershipScore",
-    "WealthScore",
-    "RelationshipScore",
-    "LearningScore",
-    "ExecutionScore",
-    "TravelScore",
-    "PurchaseScore",
+    "Paksha",
+    "Tithi",
+    "MoonNakshatra",
+    "LagnaSign",
+    "Hora",
+    "Choghadiya",
 ]
 
 
@@ -523,12 +483,12 @@ def normalize_text(value: Any) -> str | None:
     return str(value).strip()
 
 
-def get_row_scores(row: dict[str, Any]) -> dict[str, int | None]:
-    scores: dict[str, int | None] = {}
-    for key, header in SCORE_HEADERS.items():
-        numeric = to_number(row.get(header))
-        scores[key] = int(numeric) if numeric is not None else None
-    return scores
+def normalize_static_text(value: Any) -> str | None:
+    """Return literal cell text while ignoring unevaluated Excel formulas."""
+    text = normalize_text(value)
+    if text and text.startswith("="):
+        return None
+    return text
 
 
 def get_hindu_month(row: dict[str, Any]) -> str | None:
@@ -587,18 +547,6 @@ def debug_value(value: Any) -> Any:
     return value
 
 
-def overall_score(scores: dict[str, int | None]) -> int | None:
-    avoid = scores.get("avoid")
-    if avoid is not None and avoid >= 80:
-        return 0
-    positives = [
-        scores.get(key)
-        for key in AVAILABLE_CATEGORIES
-        if key not in {"overall", "avoid"} and scores.get(key) is not None
-    ]
-    return max(positives) if positives else None
-
-
 def json_dump(value: Any) -> str:
     """Serialize dashboard payload values consistently for SQLite storage."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -645,19 +593,6 @@ def write_sqlite_database(
                 end_time TEXT,
                 start_datetime TEXT,
                 end_datetime TEXT,
-                primary_state TEXT,
-                risk_level TEXT,
-                overall_score INTEGER,
-                avoid_score INTEGER,
-                golden_score INTEGER,
-                auspicious_score INTEGER,
-                leadership_score INTEGER,
-                wealth_score INTEGER,
-                relationship_score INTEGER,
-                learning_score INTEGER,
-                execution_score INTEGER,
-                travel_score INTEGER,
-                purchase_score INTEGER,
                 payload_json TEXT NOT NULL
             )
             """
@@ -667,11 +602,6 @@ def write_sqlite_database(
             CREATE TABLE day_summary (
                 date TEXT PRIMARY KEY,
                 day TEXT,
-                day_quality TEXT,
-                best_score INTEGER,
-                best_state TEXT,
-                best_window_start TEXT,
-                best_window_end TEXT,
                 payload_json TEXT NOT NULL
             )
             """
@@ -693,7 +623,6 @@ def write_sqlite_database(
 
         window_rows = []
         for index, window in enumerate(windows, start=1):
-            scores = window.get("scores", {})
             window_rows.append(
                 (
                     index,
@@ -703,19 +632,6 @@ def write_sqlite_database(
                     window.get("end"),
                     window.get("startDateTime"),
                     window.get("endDateTime"),
-                    window.get("primaryState"),
-                    window.get("riskLevel"),
-                    overall_score(scores),
-                    scores.get("avoid"),
-                    scores.get("golden"),
-                    scores.get("auspicious"),
-                    scores.get("leadership"),
-                    scores.get("wealth"),
-                    scores.get("relationship"),
-                    scores.get("learning"),
-                    scores.get("execution"),
-                    scores.get("travel"),
-                    scores.get("purchase"),
                     json_dump(window),
                 )
             )
@@ -723,11 +639,9 @@ def write_sqlite_database(
             """
             INSERT INTO windows (
                 id, date, day, start_time, end_time, start_datetime, end_datetime,
-                primary_state, risk_level, overall_score, avoid_score, golden_score,
-                auspicious_score, leadership_score, wealth_score, relationship_score,
-                learning_score, execution_score, travel_score, purchase_score, payload_json
+                payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             window_rows,
         )
@@ -736,11 +650,6 @@ def write_sqlite_database(
             (
                 summary.get("date"),
                 summary.get("day"),
-                summary.get("dayQuality"),
-                summary.get("bestScore"),
-                summary.get("bestState"),
-                summary.get("bestWindowStart"),
-                summary.get("bestWindowEnd"),
                 json_dump(summary),
             )
             for summary in day_summaries
@@ -748,20 +657,19 @@ def write_sqlite_database(
         connection.executemany(
             """
             INSERT INTO day_summary (
-                date, day, day_quality, best_score, best_state,
-                best_window_start, best_window_end, payload_json
+                date, day, payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?)
             """,
             day_rows,
         )
 
         connection.execute("CREATE INDEX idx_windows_date ON windows(date)")
         connection.execute("CREATE INDEX idx_windows_start_datetime ON windows(start_datetime)")
-        connection.execute("CREATE INDEX idx_windows_primary_state ON windows(primary_state)")
-        connection.execute("CREATE INDEX idx_windows_risk_level ON windows(risk_level)")
-        connection.execute("CREATE INDEX idx_windows_overall_score ON windows(overall_score)")
         connection.commit()
+        # Reclaim pages from the previous generated schema so muhurta.db stays
+        # compact after rule/scoring columns moved into rules.db.
+        connection.execute("VACUUM")
 
         database_window_count = connection.execute("SELECT COUNT(*) FROM windows").fetchone()[0]
         database_day_count = connection.execute("SELECT COUNT(*) FROM day_summary").fetchone()[0]
@@ -809,33 +717,27 @@ def write_static_json_from_database() -> None:
     MUHURAT_DATA_JSON.write_text(json.dumps(muhurat_data_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def export_windows_and_summary(source_workbook: Path, should_recalculate: bool = True) -> ExportStats:
+def export_windows_and_summary(source_workbook: Path, should_recalculate: bool = False) -> ExportStats:
     warnings: list[str] = []
     excel_recalculation_ran, excel_recalculation_warning = maybe_recalculate_workbook(source_workbook, should_recalculate)
     if excel_recalculation_warning:
         warnings.append(excel_recalculation_warning)
 
-    wb = load_workbook(source_workbook, data_only=True, read_only=True)
-    formula_wb = load_workbook(source_workbook, data_only=False, read_only=True)
+    # Rules and scoring are browser-owned. Read raw/static workbook cells only;
+    # no Excel calculation or cached formula values are required for export.
+    wb = load_workbook(source_workbook, data_only=False, read_only=True)
     ws = wb["EPHEMERIS_RAW"]
-    formula_ws = formula_wb["EPHEMERIS_RAW"]
     config_lookup = read_config_lookup(wb)
     row_iter = ws.iter_rows(values_only=True)
-    formula_row_iter = formula_ws.iter_rows(values_only=True)
     raw_headers = next(row_iter)
-    next(formula_row_iter)
     headers = {
         str(value): index + 1
         for index, value in enumerate(raw_headers)
         if value not in (None, "")
     }
     detected_headers = [str(value) for value in raw_headers if value not in (None, "")]
-    missing_v05_headers = [name for name in V05_REQUIRED_HEADERS if name not in headers]
-    score_columns_found = all(header in headers for header in SCORE_HEADERS.values())
-    if missing_v05_headers:
-        raise ValueError(
-            "Wrong source workbook. Required parent-state columns were not found in build/MuhuratFinder_V07_Workbook.xlsx."
-        )
+    missing_v05_headers: list[str] = []
+    score_columns_found = False
     require_headers(headers, CRITICAL_HEADERS)
 
     PUBLIC_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -849,11 +751,18 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
     active_hindu_month: str | None = None
     previous_paksha = ""
     for row_values in row_iter:
-        formula_row_values = next(formula_row_iter, ())
         raw_rows_read += 1
         start_dt_raw = row_values[headers["StartDateTime"] - 1]
         end_dt_raw = row_values[headers["EndDateTime"] - 1]
-        timezone_name = normalize_text(row_values[headers.get("EventTimezone", headers["Timezone"]) - 1]) or normalize_text(row_values[headers["Timezone"] - 1]) or "Asia/Kolkata"
+        # Event location affects muhurta. Some workbook columns deliberately
+        # reference CONFIG with formulas, so use CONFIG's literal timezone
+        # instead of mistaking formula text for an IANA timezone name.
+        timezone_name = (
+            normalize_static_text(config_lookup.get("EventTimezone"))
+            or normalize_static_text(row_values[headers.get("EventTimezone", headers["Timezone"]) - 1])
+            or normalize_static_text(row_values[headers["Timezone"] - 1])
+            or "Asia/Kolkata"
+        )
 
         if start_dt_raw in (None, "") and end_dt_raw in (None, ""):
             continue
@@ -903,33 +812,21 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             "gulika": normalize_text(raw_row.get("Gulika")),
             "durmuhurta": normalize_text(raw_row.get("Durmuhurta")),
             "varjyam": normalize_text(raw_row.get("Varjyam")),
-            "eventLocationName": normalize_text(raw_row.get("EventLocationName")),
-            "eventLatitude": to_number(raw_row.get("EventLatitude")),
-            "eventLongitude": to_number(raw_row.get("EventLongitude")),
-            "eventTimezone": normalize_text(raw_row.get("EventTimezone")),
-            "eventDST": normalize_text(raw_row.get("EventDST")),
-            "natalMoonSign": normalize_text(raw_row.get("NatalMoonSign")),
-            "natalNakshatra": normalize_text(raw_row.get("NatalNakshatra")),
-            "natalLagna": normalize_text(raw_row.get("NatalLagna")),
-            "primaryState": normalize_text(raw_row.get("PrimaryState")),
-            "primaryStateReason": normalize_text(raw_row.get("PrimaryStateReason")),
-            "secondaryStates": normalize_text(raw_row.get("SecondaryStates")),
-            "secondaryStateReason": normalize_text(raw_row.get("SecondaryStateReason")),
-            "riskLevel": normalize_text(raw_row.get("RiskLevel")),
-            "riskReason": normalize_text(raw_row.get("RiskReason")),
-            "bestActions": normalize_text(raw_row.get("BestActions")),
-            "avoidActions": normalize_text(raw_row.get("AvoidActions")),
+            "tithiKshaya": normalize_text(raw_row.get("TithiKshaya")),
+            "nakshatraKshaya": normalize_text(raw_row.get("NakshatraKshaya")),
+            "eventLocationName": normalize_text(config_lookup.get("EventLocationName")),
+            "eventLatitude": to_number(config_lookup.get("EventLatitude")),
+            "eventLongitude": to_number(config_lookup.get("EventLongitude")),
+            "eventTimezone": normalize_text(config_lookup.get("EventTimezone")) or timezone_name,
+            "eventDST": normalize_text(config_lookup.get("EventDST")),
+            "natalMoonSign": normalize_text(config_lookup.get("NatalMoonSign")),
+            "natalNakshatra": normalize_text(config_lookup.get("NatalNakshatra")),
+            "natalLagna": normalize_text(config_lookup.get("NatalLagna")),
         }
-        scores = get_row_scores(raw_row)
-        window["scores"] = scores
-
-        for key, header in SCORE_HEADERS.items():
-            if scores.get(key) is not None or header not in headers:
-                continue
-            missing_score_count += 1
-            formula_value = formula_row_values[headers[header] - 1] if len(formula_row_values) >= headers[header] else None
-            if isinstance(formula_value, str) and formula_value.startswith("="):
-                formula_cached_values_missing = True
+        for planet in ["Sun", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
+            key = planet[0].lower() + planet[1:]
+            window[f"{key}Sign"] = normalize_text(raw_row.get(f"{planet}Sign"))
+            window[f"{key}House"] = to_number(raw_row.get(f"{planet}House"))
 
         if len(debug_samples) < 20:
             debug_samples.append(
@@ -939,23 +836,16 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
                 }
             )
 
-        if any(window[field] is None for field in ["primaryState", "riskLevel", "bestActions", "avoidActions"]):
-            missing_values += 1
         windows.append(window)
 
     wb.close()
-    formula_wb.close()
 
     if not windows:
         raise ValueError("No EPHEMERIS_RAW rows were exported.")
 
     windows.sort(key=lambda item: item["startDateTime"] or "")
-    primary_state_present_count = sum(1 for item in windows if item.get("primaryState"))
-    all_scores_present_count = sum(
-        1
-        for item in windows
-        if all(item.get("scores", {}).get(key) is not None for key in SCORE_HEADERS)
-    )
+    primary_state_present_count = 0
+    all_scores_present_count = 0
 
     day_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for window in windows:
@@ -982,7 +872,6 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             sunrise_dt = datetime.combine(target_date, time.min, tzinfo=ZoneInfo(timezone_name))
         midnight_dt = datetime.combine(sunrise_dt.date() + timedelta(days=1), time.min, tzinfo=sunrise_dt.tzinfo)
         valid_bands: list[dict[str, Any]] = []
-        score_counter: Counter[str] = Counter()
         for item in items:
             start_dt = to_local_datetime(item.get("startDateTime"), timezone_name)
             end_dt = to_local_datetime(item.get("endDateTime"), timezone_name)
@@ -991,23 +880,13 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             if not (sunrise_dt <= start_dt < midnight_dt):
                 continue
             clipped_end = min(end_dt, midnight_dt)
-            scores = item["scores"]
-            band_overall = overall_score(scores)
             band = {
                 "start": to_short_time(item.get("startDateTime")),
                 "end": clipped_end.strftime("%H:%M"),
                 "startDateTime": item.get("startDateTime"),
                 "endDateTime": clipped_end.isoformat(),
-                "primaryState": item.get("primaryState"),
-                "riskLevel": item.get("riskLevel"),
-                "score": band_overall,
-                "categoryScores": {
-                    "overall": band_overall,
-                    **{key: scores.get(key) for key in SCORE_HEADERS},
-                },
             }
             valid_bands.append(band)
-            score_counter[band["primaryState"] or "Neutral / Routine"] += 1
 
         day_sample = next(
             (
@@ -1019,32 +898,6 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
             sample,
         )
 
-        scored_bands = [
-            band
-            for band in valid_bands
-            if band["categoryScores"].get("overall") is not None
-        ]
-        best_band = max(scored_bands, key=lambda band: band["categoryScores"]["overall"]) if scored_bands else None
-        avoid_scores = [
-            band["categoryScores"]["avoid"]
-            for band in valid_bands
-            if band["categoryScores"].get("avoid") is not None
-        ]
-        avoid_dominant = bool(avoid_scores) and sum(1 for score in avoid_scores if score >= 80) > len(avoid_scores) / 2
-        best_score = best_band["categoryScores"]["overall"] if best_band else None
-        if best_score is None:
-            day_quality = "Data missing"
-        elif avoid_dominant or best_score < 35:
-            day_quality = "Avoid"
-        elif best_score >= 85:
-            day_quality = "Excellent"
-        elif best_score >= 70:
-            day_quality = "Good"
-        elif best_score >= 50:
-            day_quality = "Normal"
-        else:
-            day_quality = "Weak"
-
         day_summaries.append(
             {
                 "date": day_key,
@@ -1054,11 +907,11 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
                 "mainTithi": day_sample.get("tithi"),
                 "hindu_month": day_sample.get("hindu_month"),
                 "mainNakshatra": day_sample.get("moonNakshatra"),
-                "bestWindowStart": best_band["start"] if best_band else None,
-                "bestWindowEnd": best_band["end"] if best_band else None,
-                "bestState": (best_band["primaryState"] if best_band and best_band["primaryState"] else "Data missing"),
-                "bestScore": best_score,
-                "dayQuality": day_quality,
+                "bestWindowStart": None,
+                "bestWindowEnd": None,
+                "bestState": None,
+                "bestScore": None,
+                "dayQuality": None,
                 "bands": valid_bands,
             }
         )
@@ -1078,48 +931,6 @@ def export_windows_and_summary(source_workbook: Path, should_recalculate: bool =
     }
 
     exported_dates = sorted(day_groups)
-    blocked_error = None
-    if score_columns_found and (primary_state_present_count == 0 or all_scores_present_count == 0):
-        blocked_error = (
-            "Parent-state formula results are still missing after recalculation. Open the workbook in Excel, "
-            "press Ctrl+Alt+Shift+F9, save, close, and rerun exporter."
-        )
-
-    if missing_values:
-        warnings.append(
-            f"{missing_values} rows had missing computed parent-state values. If this is unexpected, open the workbook in Excel and recalculate before export."
-        )
-    if formula_cached_values_missing:
-        warnings.append(
-            "Formula cached values are missing. Open the V07 workbook in Excel, allow calculation, save, then rerun exporter."
-        )
-
-    if blocked_error is not None:
-        return ExportStats(
-            source_workbook=source_workbook,
-            raw_rows_read=raw_rows_read,
-            windows_count=len(windows),
-            day_count=len(day_summaries),
-            first_exported_date=exported_dates[0] if exported_dates else None,
-            last_exported_date=exported_dates[-1] if exported_dates else None,
-            unique_date_count=len(exported_dates),
-            first_sample_dates=exported_dates[:5],
-            last_sample_dates=exported_dates[-5:],
-            missing_value_count=missing_values,
-            missing_score_count=missing_score_count,
-            score_columns_found=score_columns_found,
-            formula_cached_values_missing=formula_cached_values_missing,
-            detected_headers=detected_headers,
-            missing_v05_headers=missing_v05_headers,
-            debug_samples=debug_samples,
-            primary_state_present_count=primary_state_present_count,
-            all_scores_present_count=all_scores_present_count,
-            excel_recalculation_ran=excel_recalculation_ran,
-            excel_recalculation_warning=excel_recalculation_warning,
-            blocked_error=blocked_error,
-            warnings=warnings,
-        )
-
     database_window_count, database_day_count = write_sqlite_database(
         windows,
         day_summaries,
@@ -1167,14 +978,14 @@ def main() -> None:
         "--recalculate",
         dest="recalculate",
         action="store_true",
-        default=True,
-        help="Force Excel COM recalculation before export. This is the default on Windows.",
+        default=False,
+        help="Optional legacy Excel COM recalculation. Browser-owned rules do not require it.",
     )
     parser.add_argument(
         "--no-recalculate",
         dest="recalculate",
         action="store_false",
-        help="Skip Excel COM recalculation before reading cached formula values.",
+        help="Skip legacy Excel COM recalculation. This is the default.",
     )
     args = parser.parse_args()
 
@@ -1182,7 +993,7 @@ def main() -> None:
     stats = export_windows_and_summary(source_workbook, should_recalculate=args.recalculate)
     print(f"SOURCE_WORKBOOK={display_path(stats.source_workbook)}")
     print(f"DETECTED_EPHEMERIS_RAW_HEADERS={', '.join(stats.detected_headers)}")
-    print(f"PARENT_STATE_SCORE_COLUMNS_FOUND={stats.score_columns_found}")
+    print("RULE_SOURCE=rules.db (dashboard runtime)")
     if stats.missing_v05_headers:
         print(f"WARNING=Missing parent-state columns: {', '.join(stats.missing_v05_headers)}")
     print(f"EPHEMERIS_RAW_ROWS_READ={stats.raw_rows_read}")
@@ -1193,11 +1004,7 @@ def main() -> None:
     print(f"DAYS_SUMMARIZED={stats.day_count}")
     print(f"FIRST_5_DATES={', '.join(stats.first_sample_dates)}")
     print(f"LAST_5_DATES={', '.join(stats.last_sample_dates)}")
-    print(f"PRIMARY_STATE_PRESENT_ROWS={stats.primary_state_present_count}")
-    print(f"ALL_SCORE_VALUES_PRESENT_ROWS={stats.all_scores_present_count}")
     print(f"MISSING_VALUE_ROWS={stats.missing_value_count}")
-    print(f"MISSING_SCORE_VALUES={stats.missing_score_count}")
-    print(f"FORMULA_CACHED_VALUES_MISSING={stats.formula_cached_values_missing}")
     print(f"EXCEL_COM_RECALCULATION_RAN={stats.excel_recalculation_ran}")
     if stats.excel_recalculation_warning:
         print(f"WARNING={stats.excel_recalculation_warning}")

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatTime,
   getCurrentWindow,
@@ -9,6 +9,15 @@ import {
   parseDateTime,
 } from "./utils/time";
 import { compareWindows, getCategoryScore, getScoreColor } from "./utils/scoring";
+import RulesConfigPage from "./rules/RulesConfigPage";
+import { applyRulesToDaySummaries, evaluateWindow } from "./rules/ruleEngine";
+import {
+  downloadRulesDatabase,
+  importRulesDatabase,
+  loadRulesDatabase,
+  resetRulesDatabase,
+  saveRulesDatabase,
+} from "./rules/rulesDb";
 
 const CATEGORY_LABELS = {
   overall: "Overall",
@@ -212,7 +221,7 @@ function scoreText(window, category) {
   return Number.isFinite(score) ? score : "Data missing";
 }
 
-function getTimelineLabel(window, selectedCategory) {
+function getTimelineLabel(window, selectedCategory, shortforms = CATEGORY_SHORTFORMS) {
   if (!window) {
     return { code: "--", score: null, category: selectedCategory };
   }
@@ -220,7 +229,7 @@ function getTimelineLabel(window, selectedCategory) {
   if (selectedCategory && selectedCategory !== "overall") {
     const score = getCategoryScore(window, selectedCategory);
     return {
-      code: CATEGORY_SHORTFORMS[selectedCategory] || selectedCategory.slice(0, 2).toUpperCase(),
+      code: shortforms[selectedCategory] || selectedCategory.slice(0, 2).toUpperCase(),
       score,
       category: selectedCategory,
     };
@@ -238,15 +247,15 @@ function getTimelineLabel(window, selectedCategory) {
 
   const avoidScore = getCategoryScore(window, "avoid");
   if (avoidScore !== null && avoidScore >= 80) {
-    return { code: CATEGORY_SHORTFORMS.avoid, score: avoidScore, category: "avoid" };
+    return { code: shortforms.avoid, score: avoidScore, category: "avoid" };
   }
 
   if (!bestCategory) {
-    return { code: CATEGORY_SHORTFORMS.overall, score: getCategoryScore(window, "overall"), category: "overall" };
+    return { code: shortforms.overall, score: getCategoryScore(window, "overall"), category: "overall" };
   }
 
   return {
-    code: CATEGORY_SHORTFORMS[bestCategory] || bestCategory.slice(0, 2).toUpperCase(),
+    code: shortforms[bestCategory] || bestCategory.slice(0, 2).toUpperCase(),
     score: bestScore,
     category: bestCategory,
   };
@@ -338,8 +347,14 @@ export default function App() {
   const suppressTimelineClickRef = useRef(false);
   const lastTimelineAutoScrollKeyRef = useRef("");
   const [config, setConfig] = useState(null);
-  const [windows, setWindows] = useState([]);
-  const [daySummaries, setDaySummaries] = useState([]);
+  const [rawWindows, setRawWindows] = useState([]);
+  const [rawDaySummaries, setRawDaySummaries] = useState([]);
+  const [rulesBundle, setRulesBundle] = useState(null);
+  const [rulesSource, setRulesSource] = useState("");
+  const [rulesDirty, setRulesDirty] = useState(false);
+  const [rulesBusy, setRulesBusy] = useState(false);
+  const [rulesMessage, setRulesMessage] = useState("");
+  const [activePage, setActivePage] = useState(() => window.location.hash === "#rules" ? "rules" : "dashboard");
   const [selectedCategory, setSelectedCategory] = useState("overall");
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedWindow, setSelectedWindow] = useState(null);
@@ -373,8 +388,8 @@ export default function App() {
         const normalizedData = normalizeDashboardData(dashboardJson);
 
         setConfig(normalizedData.config);
-        setWindows(normalizedData.windows);
-        setDaySummaries(normalizedData.daySummaries);
+        setRawWindows(normalizedData.windows);
+        setRawDaySummaries(normalizedData.daySummaries);
         setLastUpdated(normalizedData.metadataUpdatedAt || loadedAt.toISOString());
         setLastUpdatedSource(normalizedData.metadataUpdatedAt ? "metadata" : "file-load");
       } catch (loadError) {
@@ -385,9 +400,50 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const loadRules = async () => {
+      try {
+        const loaded = await loadRulesDatabase();
+        setRulesBundle(loaded.bundle);
+        setRulesSource(loaded.source);
+      } catch (loadError) {
+        setError(`Unable to load rules database. ${loadError.message}`);
+      }
+    };
+    loadRules();
+  }, []);
+
+  useEffect(() => {
+    const handleHashChange = () => setActivePage(window.location.hash === "#rules" ? "rules" : "dashboard");
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  useEffect(() => {
     const interval = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  const deferredRulesBundle = useDeferredValue(rulesBundle);
+  const windows = useMemo(
+    () => deferredRulesBundle ? rawWindows.map((window) => evaluateWindow(window, deferredRulesBundle)) : rawWindows,
+    [deferredRulesBundle, rawWindows],
+  );
+  const daySummaries = useMemo(
+    () => deferredRulesBundle ? applyRulesToDaySummaries(rawDaySummaries, windows) : rawDaySummaries,
+    [deferredRulesBundle, rawDaySummaries, windows],
+  );
+  const categoryLabels = useMemo(() => ({
+    ...CATEGORY_LABELS,
+    ...Object.fromEntries((rulesBundle?.categories || []).map((category) => [category.id, category.label])),
+  }), [rulesBundle]);
+  const categoryShortforms = useMemo(() => ({
+    ...CATEGORY_SHORTFORMS,
+    ...Object.fromEntries((rulesBundle?.categories || []).map((category) => [category.id, category.short_code])),
+  }), [rulesBundle]);
+  const categoryLineColors = useMemo(() => ({
+    ...CATEGORY_LINE_COLORS,
+    ...Object.fromEntries((rulesBundle?.categories || []).map((category) => [category.id, category.color])),
+  }), [rulesBundle]);
 
   const eventTimeZone = config?.eventTimezone || "Asia/Kolkata";
   const currentWindow = useMemo(() => getCurrentWindow(windows, now), [windows, now]);
@@ -466,6 +522,12 @@ export default function App() {
       setSelectedWindow(currentDayWindows[0]);
     }
   }, [currentWindow, currentDayWindows, selectedWindow]);
+
+  useEffect(() => {
+    if (!selectedWindow?.startDateTime) return;
+    const refreshed = windows.find((window) => window.startDateTime === selectedWindow.startDateTime);
+    if (refreshed && refreshed !== selectedWindow) setSelectedWindow(refreshed);
+  }, [selectedWindow, windows]);
 
   const comparison = useMemo(
     () => compareWindows(currentWindow, nextWindow, selectedCategory),
@@ -652,7 +714,7 @@ export default function App() {
     return names;
   }, [visibleMonthDetails]);
   const calendarTitle = useMemo(() => {
-    const categoryLabel = CATEGORY_LABELS[selectedCategory] || selectedCategory;
+    const categoryLabel = categoryLabels[selectedCategory] || selectedCategory;
     const baseTitle = `${categoryLabel} Band view of ${visibleGregorianMonthLabel || "available dates"}`;
     if (!visibleHinduMonths.length) return baseTitle;
     const hinduMonthText =
@@ -660,7 +722,7 @@ export default function App() {
         ? visibleHinduMonths[0]
         : `${visibleHinduMonths[0]} - ${visibleHinduMonths[visibleHinduMonths.length - 1]}`;
     return `${baseTitle} (${hinduMonthText})`;
-  }, [selectedCategory, visibleGregorianMonthLabel, visibleHinduMonths]);
+  }, [categoryLabels, selectedCategory, visibleGregorianMonthLabel, visibleHinduMonths]);
 
   const handleTimelineWheel = (event) => {
     const wrapper = timelineScrollRef.current;
@@ -803,8 +865,111 @@ export default function App() {
     lastTimelineAutoScrollKeyRef.current = autoScrollKey;
   }, [nowMarkerPosition, selectedDate, selectedDateIsToday, timelineCanRender, timelineLayout.firstActiveScrollLeft, timelineLayout.stripWidth, timelineScrollRequest]);
 
+  const openDashboard = () => {
+    window.location.hash = "";
+    setActivePage("dashboard");
+  };
+
+  const openRules = () => {
+    window.location.hash = "rules";
+    setActivePage("rules");
+  };
+
+  const handleRulesChange = (nextBundle) => {
+    startTransition(() => setRulesBundle(nextBundle));
+    setRulesDirty(true);
+    setRulesMessage("Live preview updated. Save when you want to keep these changes in your browser rules.db.");
+  };
+
+  const handleRulesSave = async () => {
+    if (!rulesBundle) return;
+    setRulesBusy(true);
+    try {
+      await saveRulesDatabase(rulesBundle);
+      setRulesDirty(false);
+      setRulesSource("browser rules.db");
+      setRulesMessage("Rules saved to this browser's SQLite database.");
+    } catch (saveError) {
+      setRulesMessage(`Save failed: ${saveError.message}`);
+    } finally {
+      setRulesBusy(false);
+    }
+  };
+
+  const handleRulesReset = async () => {
+    if (!window.confirm("Reset all browser rule edits to the hosted rules.db baseline?")) return;
+    setRulesBusy(true);
+    try {
+      const loaded = await resetRulesDatabase();
+      startTransition(() => setRulesBundle(loaded.bundle));
+      setRulesSource(loaded.source);
+      setRulesDirty(false);
+      setRulesMessage("Browser edits cleared; hosted baseline rules restored.");
+    } catch (resetError) {
+      setRulesMessage(`Reset failed: ${resetError.message}`);
+    } finally {
+      setRulesBusy(false);
+    }
+  };
+
+  const handleRulesImport = async (file) => {
+    setRulesBusy(true);
+    try {
+      const loaded = await importRulesDatabase(file);
+      startTransition(() => setRulesBundle(loaded.bundle));
+      setRulesSource(loaded.source);
+      setRulesDirty(false);
+      setRulesMessage(`${file.name} imported and saved in this browser.`);
+    } catch (importError) {
+      setRulesMessage(`Import failed: ${importError.message}`);
+    } finally {
+      setRulesBusy(false);
+    }
+  };
+
+  const handleRulesExport = async () => {
+    if (!rulesBundle) return;
+    try {
+      await downloadRulesDatabase(rulesBundle);
+      setRulesMessage("Current live rules exported as rules.db.");
+    } catch (exportError) {
+      setRulesMessage(`Export failed: ${exportError.message}`);
+    }
+  };
+
   if (error) {
     return <div className="shell"><div className="card error-card">{error}</div></div>;
+  }
+
+  if (!config || !rulesBundle || !deferredRulesBundle) {
+    return (
+      <div className="shell">
+        <div className="card loading-card">Loading ephemeris data and rules.db...</div>
+      </div>
+    );
+  }
+
+  if (activePage === "rules") {
+    return (
+      <div className="shell rules-shell">
+        {rulesBundle ? (
+          <RulesConfigPage
+            bundle={rulesBundle}
+            source={rulesSource}
+            previewWindow={selectedWindow || currentWindow || windows[0]}
+            dirty={rulesDirty}
+            busy={rulesBusy}
+            message={rulesMessage}
+            onChange={handleRulesChange}
+            onSave={handleRulesSave}
+            onReset={handleRulesReset}
+            onExport={handleRulesExport}
+            onImport={handleRulesImport}
+            onBack={openDashboard}
+          />
+        ) : <div className="card loading-card">Loading rules.db…</div>}
+      </div>
+    );
   }
 
   return (
@@ -818,10 +983,16 @@ export default function App() {
             {lastUpdatedSource === "file-load" ? " (loaded from file)" : ""}
           </p>
         </div>
-        <div className="clock-card">
-          <span>Live time</span>
-          <strong>{formatTime(now, eventTimeZone)}</strong>
-          <small>{liveDateLabel}</small>
+        <div className="header-tools">
+          <button type="button" className="rules-nav-button" onClick={openRules}>
+            <span>Rule Lab</span>
+            <strong>Config & points</strong>
+          </button>
+          <div className="clock-card">
+            <span>Live time</span>
+            <strong>{formatTime(now, eventTimeZone)}</strong>
+            <small>{liveDateLabel}</small>
+          </div>
         </div>
       </header>
 
@@ -842,7 +1013,7 @@ export default function App() {
                 checked={selectedCategory === category}
                 onChange={() => handleCategoryChange(category)}
               />
-              <span>{CATEGORY_LABELS[category] || category}</span>
+              <span>{categoryLabels[category] || category}</span>
             </label>
           ))}
         </div>
@@ -871,7 +1042,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="score-badge" style={{ background: getScoreColor(getCategoryScore(currentWindow, selectedCategory), selectedCategory) }}>
-                  <span>{CATEGORY_LABELS[selectedCategory]}</span>
+                  <span>{categoryLabels[selectedCategory]}</span>
                   <strong>{scoreText(currentWindow, selectedCategory)}</strong>
                 </div>
               </div>
@@ -1016,7 +1187,7 @@ export default function App() {
               {timelineMode === "best"
                 ? "Strongest signal per window"
                 : timelineMode === "single"
-                  ? `${CATEGORY_LABELS[selectedCategory] || selectedCategory} intensity`
+                  ? `${categoryLabels[selectedCategory] || selectedCategory} intensity`
                   : "All category signals"}
             </span>
           </div>
@@ -1031,8 +1202,8 @@ export default function App() {
                   aria-pressed={Boolean(activeTrendCategories[category])}
                   onClick={() => toggleTrendCategory(category)}
                 >
-                  <span style={{ "--trend-color": CATEGORY_LINE_COLORS[category] }} />
-                  {CATEGORY_SHORTFORMS[category]} {CATEGORY_LABELS[category]}
+                  <span style={{ "--trend-color": categoryLineColors[category] }} />
+                  {categoryShortforms[category]} {categoryLabels[category]}
                 </button>
               ))}
             </div>
@@ -1059,7 +1230,7 @@ export default function App() {
                     />
                     {timelineBands.map((band, index) => {
                       const width = safePixel(timelineLayout.segmentWidths[index], MIN_TIMELINE_SEGMENT_WIDTH);
-                      const timelineLabel = getTimelineLabel(band, timelineDisplayCategory);
+                      const timelineLabel = getTimelineLabel(band, timelineDisplayCategory, categoryShortforms);
                       const isOngoing = isCurrentWindow(band, now);
                       const hasReadableLabel = width >= TIMELINE_LABEL_MIN_WIDTH;
                       const startLabel = band?.start || formatTime(band?.startDateTime, eventTimeZone);
@@ -1072,7 +1243,7 @@ export default function App() {
                           data-window-start={band.startDateTime}
                           className={`timeline-segment ${selectedWindow?.startDateTime === band.startDateTime ? "active" : ""} ${isOngoing ? "ongoing" : ""} ${hasReadableLabel ? "" : "compact"}`}
                           style={{ width: `${width}px`, background: getScoreColor(timelineLabel.score, timelineLabel.category) }}
-                          title={`${startLabel} - ${endLabel} · ${CATEGORY_LABELS[timelineLabel.category] || timelineLabel.category}: ${timelineLabelScore} · ${band.primaryState || band.riskLevel || "Data missing"}`}
+                          title={`${startLabel} - ${endLabel} · ${categoryLabels[timelineLabel.category] || timelineLabel.category}: ${timelineLabelScore} · ${band.primaryState || band.riskLevel || "Data missing"}`}
                           onMouseEnter={() => setTimelineHoverIndex(index)}
                           onFocus={() => setTimelineHoverIndex(index)}
                           onClick={(event) => {
@@ -1130,7 +1301,7 @@ export default function App() {
                               key={category}
                               className={`trend-line ${DOTTED_TREND_CATEGORIES.has(category) ? "dotted" : ""} ${category === "avoid" ? "avoid" : ""}`}
                               d={buildTrendPath(timelineTrendPoints, category)}
-                              stroke={CATEGORY_LINE_COLORS[category]}
+                              stroke={categoryLineColors[category]}
                               vectorEffect="non-scaling-stroke"
                             />
                           ) : null,
@@ -1144,7 +1315,7 @@ export default function App() {
                                   cx={hoveredTimelinePoint.centerX}
                                   cy={getTrendPointY(category, hoveredTimelinePoint.scores[category])}
                                   r="2.6"
-                                  fill={CATEGORY_LINE_COLORS[category]}
+                                  fill={categoryLineColors[category]}
                                 />
                               ) : null,
                             )
@@ -1182,8 +1353,8 @@ export default function App() {
                       <div className="timeline-tooltip-grid">
                         {TREND_CATEGORIES.map((category) => (
                           <span key={category}>
-                            <i style={{ background: CATEGORY_LINE_COLORS[category] }} />
-                            {CATEGORY_SHORTFORMS[category]}
+                            <i style={{ background: categoryLineColors[category] }} />
+                            {categoryShortforms[category]}
                             <b>{Number.isFinite(hoveredTimelinePoint.scores[category]) ? hoveredTimelinePoint.scores[category] : "—"}</b>
                           </span>
                         ))}
@@ -1215,7 +1386,7 @@ export default function App() {
           {selectedWindow ? (
             <div className="detail-grid">
               <div className="selected-score-tile">
-                <span>{CATEGORY_LABELS[selectedCategory] || selectedCategory} score</span>
+                <span>{categoryLabels[selectedCategory] || selectedCategory} score</span>
                 <strong>{scoreText(selectedWindow, selectedCategory)}</strong>
                 <div
                   className="selected-score-bar"

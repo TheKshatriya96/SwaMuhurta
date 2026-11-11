@@ -19,7 +19,6 @@ BUILD_DATA_DIR = BUILD_DIR / "data"
 WORKBOOK_PATH = BUILD_DIR / "MuhuratFinder_V07_Workbook.xlsx"
 MUHURTA_DB = BUILD_DATA_DIR / "muhurta.db"
 RAW_BUILDER = BUILD_DIR / "dependencies" / "v07_workbook_builder.py"
-PARENT_STATE_ENGINE = BUILD_DIR / "dependencies" / "v07_parent_state_engine.py"
 EXPORTER = BUILD_DIR / "export_excel_to_json.py"
 PUSH_SCRIPT = BUILD_DIR / "push_online.py"
 REQUIRED_JSON_FILES = [
@@ -42,7 +41,7 @@ def run_step(command: list[str], cwd: Path) -> None:
 
 
 def validate_paths() -> None:
-    for path in [BUILD_DIR, WEB_DIR, RAW_BUILDER, PARENT_STATE_ENGINE, EXPORTER, PUSH_SCRIPT]:
+    for path in [BUILD_DIR, WEB_DIR, RAW_BUILDER, EXPORTER, PUSH_SCRIPT]:
         if not path.exists():
             raise FileNotFoundError(f"Required V07 path missing: {path}")
     if not WORKBOOK_PATH.exists():
@@ -54,7 +53,7 @@ def validate_paths() -> None:
 
 def validate_runtime_scripts_are_local() -> None:
     suspicious: list[str] = []
-    for script_path in [RAW_BUILDER, PARENT_STATE_ENGINE, EXPORTER, PUSH_SCRIPT]:
+    for script_path in [RAW_BUILDER, EXPORTER, PUSH_SCRIPT]:
         content = script_path.read_text(encoding="utf-8")
         for pattern in EXTERNAL_PATH_PATTERNS:
             if pattern.search(content):
@@ -130,11 +129,7 @@ def main() -> None:
     WEB_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     run_step([sys.executable, str(RAW_BUILDER)], PROJECT_ROOT)
-    run_step([sys.executable, str(PARENT_STATE_ENGINE)], PROJECT_ROOT)
-
-    export_command = [sys.executable, str(EXPORTER)]
-    if args.no_recalculate:
-        export_command.append("--no-recalculate")
+    export_command = [sys.executable, str(EXPORTER), "--no-recalculate"]
     run_step(export_command, PROJECT_ROOT)
 
     validate_workbook_structure()
